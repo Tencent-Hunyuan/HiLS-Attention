@@ -367,16 +367,7 @@ class HiLSAttention(nn.Module):
         self.h_kv = config.num_key_value_heads
         self.h_q = config.num_attention_heads
 
-        assert self.h_q % 4 == 0, "num_attention_heads must be divisible by 4"
-        self.hsa_heads = getattr(config, "hsa_heads", self.h_q // 4)
-        self.hsa_qk_ratio = getattr(config, "hsa_qk_ratio", 4)
-        assert self.hsa_heads % self.hsa_qk_ratio == 0, "hsa_heads must be divisible by hsa_qk_ratio"
-        assert self.h_q % self.hsa_heads == 0, "num_attention_heads must be divisible by hsa_heads"
-        self.hsa_denom = self.h_q // self.hsa_heads
-
-        assert self.h_kv % self.hsa_denom == 0, "num_key_value_heads must be divisible by hsa_denom"
-
-        self.q_proj = nn.Linear(self.d_model, self.d_model // self.hsa_denom, bias=False)
+        self.q_proj = nn.Linear(self.d_model, self.d_model, bias=False)
         self.k_proj = nn.Linear(self.d_model, self.h_kv * self.head_dim, bias=False)
         self.v_proj = nn.Linear(self.d_model, self.h_kv * self.head_dim, bias=False)
 
@@ -444,13 +435,9 @@ class HiLSAttention(nn.Module):
         self.is_causal = True
         
         hsa_mode = config.hsa_mode
-        self.groupwise_topk = getattr(config, "groupwise_topk", True)
-        if self.groupwise_topk:
-            from ops.hsa_fwd_bwd_group import HSA_block_M_group as HSA
-            from ops.topk_group import online_topk_group as topk_func
-        else:
-            from ops.hsa_fwd_bwd_head import HSA_block_M_head as HSA
-            from ops.topk_head_softmax import online_softmax_topk_head as topk_func
+
+        from ops.hsa_fwd_bwd_head import HSA_block_M_head as HSA
+        from ops.topk_head_softmax import online_softmax_topk_head as topk_func
         self.topk_func = topk_func
         self.hsa_func = HSA
         self.hsa_intra_chunk_rope = hsa_intra_chunk_rope
@@ -477,58 +464,6 @@ class HiLSAttention(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         B, L, _ = hidden_states.shape
         cos, sin = position_embeddings
-        if self.hsa_denom > 1:
-            assert not self.layerwise_qk_norm, 'not support layerwise_qk_norm with hsa_denom > 1'
-            swa_q = self.q_proj(hidden_states)  # (B, L, d)
-            swa_q = rearrange(swa_q, 'B L (h d)->B L h d', d=self.head_dim)
-            swa_q_norm = self.q_norm(swa_q)  # q_norm
-            swa_k = self.k_proj(hidden_states)
-            swa_k = rearrange(swa_k, 'B L (h d)->B L h d', d=self.head_dim)  # (B, L, h, d)
-            swa_k_norm = self.k_norm(swa_k)
-            swa_v = self.v_proj(hidden_states)
-            swa_v = rearrange(swa_v, 'B L (h d)->B L h d', d=self.head_dim)  # (B, L, h, d)
-
-            swa_q_norm = swa_q_norm.transpose(1, 2)
-            swa_k_norm = swa_k_norm.transpose(1, 2)
-            swa_v = swa_v.transpose(1, 2)  # (B, h, L, d)
-
-            # The position embedding should be compatible with kv passing
-            assert swa_q_norm.shape[2] == swa_k_norm.shape[2], f'{swa_q_norm.shape} vs {swa_k_norm.shape}'
-            swa_q_norm, swa_k_norm = apply_rotary_pos_emb(swa_q_norm, swa_k_norm, cos, sin)
-
-            # Inference: SWA KV cache
-            if use_cache and past_key_values is not None:
-                cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-                swa_k_norm, swa_v = past_key_values.update(
-                    swa_k_norm, swa_v, self.layer_idx, cache_kwargs
-                )
-                if self.sliding_window is not None:
-                    kv_item = past_key_values.layers[self.layer_idx]
-                    if kv_item.keys is not None and kv_item.keys.shape[-2] > self.sliding_window:
-                        kv_item.keys = kv_item.keys[:, :, -self.sliding_window:, :]
-                        kv_item.values = kv_item.values[:, :, -self.sliding_window:, :]
-
-            attention_interface: Callable = eager_attention_forward
-            if self.config._attn_implementation != "eager":
-                if self.config._attn_implementation == "sdpa" and kwargs.get("output_attentions", False):
-                    logger.warning_once(
-                        "`torch.nn.functional.scaled_dot_product_attention‰` does not support `output_attentions=True`. Falling back to "
-                        'eager attention. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
-                    )
-                else:
-                    attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
-
-            o_upper, _ = attention_interface(
-                self,
-                swa_q_norm,
-                swa_k_norm,
-                swa_v,
-                attention_mask,
-                dropout=0.0,
-                scaling=self.scaling,
-                sliding_window=self.sliding_window,  # diff with Llama
-                **kwargs,
-            )  # (B, L, h_q // 2, d)
 
         hsa_q = self.q_proj(hidden_states)
         if self.enable_lmk_q_proj:
@@ -799,38 +734,24 @@ class HiLSAttention(nn.Module):
                     drop_mask = drop_mask * gate
 
             assert cu_seq_lens_q is None, "cu_seq_lens_q is not supported for headwise topk"
-            # print(f'lse_sum: {lse_sum.shape}')
-            if self.groupwise_topk:
-                indices, scores = self.topk_func(
-                    lmk_q_norm,
-                    lmk_k,
-                    self.topk,
-                    block_size=self.chunk_size,
-                    window_size=self.hsa_sliding_window,
-                    is_training=self.training,
-                    is_causal=True,
-                    drop_mask=drop_mask,
-                    q_offset=q_offset,
-                )
-            else:
-                indices, scores = self.topk_func(
-                    lmk_q_norm,
-                    lmk_k,
-                    lse_sum,
-                    self.topk,
-                    block_size=self.chunk_size,
-                    window_size=self.hsa_sliding_window,
-                    is_training=self.training,
-                    is_causal=True,
-                    drop_mask=drop_mask,
-                    q_offset=q_offset,
-                    use_gumbel=self.enable_gumbel_noise and self.training,
-                    G=None if self.compact_lmk_k else lmk_k.shape[2] // self.h_kv,
-                    bias=prior_b
-                )
-                # print(f'indices shape: {indices.shape}, scores.shape: {scores.shape}')
-                # indices: [N, L, h_kv, K]
-                # scores: [N, L, h_q, K]
+            
+            indices, scores = self.topk_func(
+                lmk_q_norm,
+                lmk_k,
+                lse_sum,
+                self.topk,
+                block_size=self.chunk_size,
+                window_size=self.hsa_sliding_window,
+                is_training=self.training,
+                is_causal=True,
+                drop_mask=drop_mask,
+                q_offset=q_offset,
+                use_gumbel=self.enable_gumbel_noise and self.training,
+                G=None if self.compact_lmk_k else lmk_k.shape[2] // self.h_kv,
+                bias=prior_b
+            )
+            # indices: [N, L, h_kv, K]
+            # scores: [N, L, h_q, K]
 
 
             if self.enable_prior_query and prior_b is not None:
@@ -893,19 +814,11 @@ class HiLSAttention(nn.Module):
                 hsa_q_norm = hsa_q_norm_nope
                 hsa_k_norm = hsa_k_norm_nope
 
-            if self.groupwise_topk:
-                hsa_o = self.hsa_func(hsa_q_norm, hsa_k_norm, hsa_v, weights=chunk_weights, indices=indices, block_size=self.chunk_size, mask_last_token=True, is_training=self.training)
-            else:
-                hsa_o = self.hsa_func(hsa_q_norm, hsa_k_norm, hsa_v, weights=chunk_weights, indices=indices, block_size=self.chunk_size, mask_last_token=True, is_training=self.training)
+            hsa_o = self.hsa_func(hsa_q_norm, hsa_k_norm, hsa_v, weights=chunk_weights, indices=indices, block_size=self.chunk_size, mask_last_token=True, is_training=self.training)
             if self.enable_hsa_swa:
                 swa_o_weight = chunk_weights[:, :, :, swa_weight_idx]  # (B, L, h_kv)
-                # o = hsa_o + swa_o * swa_o_weight.unsqueeze(-1)
-                if self.groupwise_topk:
-                    swa_o_weight_expanded = swa_o_weight.repeat_interleave(
-                        self.hsa_qk_ratio, dim=2
-                    )
-                else:
-                    swa_o_weight_expanded = swa_o_weight
+
+                swa_o_weight_expanded = swa_o_weight
                 o_lower = torch.addcmul(hsa_o, swa_o, swa_o_weight_expanded.unsqueeze(-1))
             else:
                 o_lower = hsa_o
@@ -913,10 +826,6 @@ class HiLSAttention(nn.Module):
             if self.enable_hsa_swa and self.enable_softmax1:
                 # Match the no-visible-chunk full path: softmax([lse_swa, 0]).
                 swa_o_weight = torch.sigmoid(lse_sum).to(swa_o.dtype)
-                if self.groupwise_topk:
-                    swa_o_weight = swa_o_weight.repeat_interleave(
-                        self.hsa_qk_ratio, dim=2
-                    )
                 o_lower = swa_o * swa_o_weight.unsqueeze(-1)
             else:
                 o_lower = swa_o
