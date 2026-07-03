@@ -1,0 +1,15 @@
+**/__pycache__/**
+**.pyc
+nohup.*
+wandb/*
+*.out
+*.log
+*.txt
+**/logs/**
+**/speed/**
+**/devcodebook/**
+.claude/**
+.cache/**
+.cache/dataset_size.json
+tmp/
+icl_inference_output/

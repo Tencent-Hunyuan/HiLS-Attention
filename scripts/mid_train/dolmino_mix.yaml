@@ -1,0 +1,266 @@
+# Dolmino midtraining mix ratios — ingredient1, 100B
+# Source: OLMo-core/src/olmo_core/data/README.md "Mix Compositions" table (100B column)
+#         + OLMo-midtraining-mix-0925-ingredient1-100B.txt
+#
+# The README lists individual reasoning traces (qwq 1.87%, gemini 0.25%, etc.) as
+# separate rows. In the dolmino dataset, these are BUNDLED into:
+#   general_reasoning_mix = r1 + qwq + gemini + llamanemotron + openthoughts2 = 6.49%
+#   program_verifiable    = verifiable-gpt41 + verifiable-o4mini              = 0.16%
+#   wiki_to_rcqa-part1/2  = wiki_to_rcqa (split into 2 parts)                = 3.0%
+#
+# All weights sum to 1.0 (= 100%).
+
+data_root: /data/dolmino-midtrain-100B-tokenized
+
+sources:
+  # ============================================================
+  # Math (19.52%)
+  # ============================================================
+  - name: dolmino-math
+    dirs: [ingredient1-dolmino-math]
+    weight: 0.1070       # 10.7%
+
+  - name: cranemath
+    dirs: [ingredient1-cranemath]
+    weight: 0.0563       # 5.63%
+
+  - name: megamatt
+    dirs: [ingredient1-megamatt]
+    weight: 0.0173       # 1.73%
+
+  - name: tinymath-mind
+    dirs: [ingredient1-tinymath-mind]
+    weight: 0.009        # 0.9%
+
+  - name: tinymath-pot
+    dirs: [ingredient1-tinymath-pot]
+    weight: 0.0024       # 0.24%
+
+  - name: omr-rewrite-fullthoughts
+    dirs: [ingredient1-omr-rewrite-fullthoughts]
+    weight: 0.0085       # 0.85%
+
+  # ============================================================
+  # Code (20.0%)
+  # ============================================================
+  - name: code-fim
+    dirs:
+      - ingredient1-stack_edu-fim_vigintile_15_C
+      - ingredient1-stack_edu-fim_vigintile_15_Cpp
+      - ingredient1-stack_edu-fim_vigintile_15_CSharp
+      - ingredient1-stack_edu-fim_vigintile_15_Go
+      - ingredient1-stack_edu-fim_vigintile_15_Java
+      - ingredient1-stack_edu-fim_vigintile_15_JavaScript
+      - ingredient1-stack_edu-fim_vigintile_15_Markdown
+      - ingredient1-stack_edu-fim_vigintile_15_PHP
+      - ingredient1-stack_edu-fim_vigintile_15_Python
+      - ingredient1-stack_edu-fim_vigintile_15_Ruby
+      - ingredient1-stack_edu-fim_vigintile_15_Rust
+      - ingredient1-stack_edu-fim_vigintile_15_Shell
+      - ingredient1-stack_edu-fim_vigintile_15_SQL
+      - ingredient1-stack_edu-fim_vigintile_15_Swift
+      - ingredient1-stack_edu-fim_vigintile_15_TypeScript
+      - ingredient1-stack_edu-fim_vigintile_16_C
+      - ingredient1-stack_edu-fim_vigintile_16_Cpp
+      - ingredient1-stack_edu-fim_vigintile_16_CSharp
+      - ingredient1-stack_edu-fim_vigintile_16_Go
+      - ingredient1-stack_edu-fim_vigintile_16_Java
+      - ingredient1-stack_edu-fim_vigintile_16_JavaScript
+      - ingredient1-stack_edu-fim_vigintile_16_Markdown
+      - ingredient1-stack_edu-fim_vigintile_16_PHP
+      - ingredient1-stack_edu-fim_vigintile_16_Python
+      - ingredient1-stack_edu-fim_vigintile_16_Ruby
+      - ingredient1-stack_edu-fim_vigintile_16_Rust
+      - ingredient1-stack_edu-fim_vigintile_16_Shell
+      - ingredient1-stack_edu-fim_vigintile_16_SQL
+      - ingredient1-stack_edu-fim_vigintile_16_Swift
+      - ingredient1-stack_edu-fim_vigintile_16_TypeScript
+      - ingredient1-stack_edu-fim_vigintile_17_C
+      - ingredient1-stack_edu-fim_vigintile_17_Cpp
+      - ingredient1-stack_edu-fim_vigintile_17_CSharp
+      - ingredient1-stack_edu-fim_vigintile_17_Go
+      - ingredient1-stack_edu-fim_vigintile_17_Java
+      - ingredient1-stack_edu-fim_vigintile_17_JavaScript
+      - ingredient1-stack_edu-fim_vigintile_17_Markdown
+      - ingredient1-stack_edu-fim_vigintile_17_PHP
+      - ingredient1-stack_edu-fim_vigintile_17_Python
+      - ingredient1-stack_edu-fim_vigintile_17_Ruby
+      - ingredient1-stack_edu-fim_vigintile_17_Rust
+      - ingredient1-stack_edu-fim_vigintile_17_Shell
+      - ingredient1-stack_edu-fim_vigintile_17_SQL
+      - ingredient1-stack_edu-fim_vigintile_17_Swift
+      - ingredient1-stack_edu-fim_vigintile_17_TypeScript
+      - ingredient1-stack_edu-fim_vigintile_19_C
+      - ingredient1-stack_edu-fim_vigintile_19_Cpp
+      - ingredient1-stack_edu-fim_vigintile_19_CSharp
+      - ingredient1-stack_edu-fim_vigintile_19_Go
+      - ingredient1-stack_edu-fim_vigintile_19_Java
+      - ingredient1-stack_edu-fim_vigintile_19_JavaScript
+      - ingredient1-stack_edu-fim_vigintile_19_Markdown
+      - ingredient1-stack_edu-fim_vigintile_19_PHP
+      - ingredient1-stack_edu-fim_vigintile_19_Python
+      - ingredient1-stack_edu-fim_vigintile_19_Ruby
+      - ingredient1-stack_edu-fim_vigintile_19_Rust
+      - ingredient1-stack_edu-fim_vigintile_19_Shell
+      - ingredient1-stack_edu-fim_vigintile_19_SQL
+      - ingredient1-stack_edu-fim_vigintile_19_Swift
+      - ingredient1-stack_edu-fim_vigintile_19_TypeScript
+    weight: 0.1000       # 10.0%
+
+  - name: cranecode
+    dirs: [ingredient1-cranecode]
+    weight: 0.1000       # 10.0%
+
+  # ============================================================
+  # Reasoning / Thinking (7.33%)
+  # general_reasoning_mix bundles: r1(1.87%) + qwq(1.87%) + gemini(0.25%)
+  #   + llamanemotron(1.25%) + openthoughts2(1.25%) + general(1.87%) = 6.49%
+  #   (README lists "General Reasoning Mix 1.87%" as one of the 5 trace sources)
+  # program_verifiable bundles: verifiable-gpt41 + verifiable-o4mini = 0.16%
+  # ============================================================
+  - name: general-reasoning
+    dirs: [ingredient1-general_reasoning_mix]
+    weight: 0.0649       # 6.49% (bundle of all reasoning traces)
+
+  - name: math-meta-reasoning
+    dirs: [ingredient1-math-meta-reasoning]
+    weight: 0.0038       # 0.38%
+
+  - name: code-meta-reasoning
+    dirs: [ingredient1-code-meta-reasoning]
+    weight: 0.0046       # 0.46%
+
+  - name: program-verifiable
+    dirs: [ingredient1-program_verifiable]
+    weight: 0.0016       # 0.16%
+
+  # ============================================================
+  # QA (13.9%)
+  # ============================================================
+  - name: nemotron-synth-qa
+    dirs: [ingredient1-nemotron-synth-qa]
+    weight: 0.0500       # 5.0%
+
+  - name: wiki-rcqa
+    dirs: [ingredient1-wiki_to_rcqa-part1, ingredient1-wiki_to_rcqa-part2]
+    weight: 0.0300       # 3.0%
+
+  - name: reddit-flashcards
+    dirs: [ingredient1-reddit_to_flashcards]
+    weight: 0.0590       # 5.9%
+
+  # ============================================================
+  # Instruction (6.1%)
+  # ============================================================
+  - name: tulu-3-sft
+    dirs: [ingredient1-tulu-3-sft]
+    weight: 0.0110       # 1.1%
+
+  - name: dolmino-flan
+    dirs: [ingredient1-dolmino_1-flan]
+    weight: 0.0500       # 5.0%
+
+  # ============================================================
+  # PDF (5.0%)
+  # ============================================================
+  - name: pdf-all
+    dirs:
+      - ingredient1-olmocr_science_pdfs-high_quality-art_design-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-art_design-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-crime_law-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-crime_law-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-education_jobs-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-education_jobs-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-entertainment-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-entertainment-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-finance_business-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-finance_business-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-hardware-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-hardware-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-health-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-health-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-history-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-history-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-home_hobbies-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-home_hobbies-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-industrial-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-industrial-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-literature-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-literature-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-politics-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-politics-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-religion-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-religion-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-science_tech-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-science_tech-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-software-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-software-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-software_dev-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-software_dev-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-sports_fitness-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-sports_fitness-2e13
+      - ingredient1-olmocr_science_pdfs-high_quality-transportation-2e12
+      - ingredient1-olmocr_science_pdfs-high_quality-transportation-2e13
+    weight: 0.0500       # 5.0%
+
+  # ============================================================
+  # Web - Common Crawl (22.5%)
+  # ============================================================
+  - name: web-all
+    dirs:
+      - ingredient1-common_crawl-high-quality_19_adult_content
+      - ingredient1-common_crawl-high-quality_19_art_and_design
+      - ingredient1-common_crawl-high-quality_19_crime_and_law
+      - ingredient1-common_crawl-high-quality_19_education_and_jobs
+      - ingredient1-common_crawl-high-quality_19_electronics_and_hardware
+      - ingredient1-common_crawl-high-quality_19_entertainment
+      - ingredient1-common_crawl-high-quality_19_fashion_and_beauty
+      - ingredient1-common_crawl-high-quality_19_finance_and_business
+      - ingredient1-common_crawl-high-quality_19_food_and_dining
+      - ingredient1-common_crawl-high-quality_19_games
+      - ingredient1-common_crawl-high-quality_19_health
+      - ingredient1-common_crawl-high-quality_19_history_and_geography
+      - ingredient1-common_crawl-high-quality_19_home_and_hobbies
+      - ingredient1-common_crawl-high-quality_19_industrial
+      - ingredient1-common_crawl-high-quality_19_literature
+      - ingredient1-common_crawl-high-quality_19_politics
+      - ingredient1-common_crawl-high-quality_19_religion
+      - ingredient1-common_crawl-high-quality_19_science_math_and_technology
+      - ingredient1-common_crawl-high-quality_19_social_life
+      - ingredient1-common_crawl-high-quality_19_software
+      - ingredient1-common_crawl-high-quality_19_software_development
+      - ingredient1-common_crawl-high-quality_19_sports_and_fitness
+      - ingredient1-common_crawl-high-quality_19_transportation
+      - ingredient1-common_crawl-high-quality_19_travel_and_tourism
+      - ingredient1-common_crawl-high-quality_20_adult_content
+      - ingredient1-common_crawl-high-quality_20_art_and_design
+      - ingredient1-common_crawl-high-quality_20_crime_and_law
+      - ingredient1-common_crawl-high-quality_20_education_and_jobs
+      - ingredient1-common_crawl-high-quality_20_electronics_and_hardware
+      - ingredient1-common_crawl-high-quality_20_entertainment
+      - ingredient1-common_crawl-high-quality_20_fashion_and_beauty
+      - ingredient1-common_crawl-high-quality_20_finance_and_business
+      - ingredient1-common_crawl-high-quality_20_food_and_dining
+      - ingredient1-common_crawl-high-quality_20_games
+      - ingredient1-common_crawl-high-quality_20_health
+      - ingredient1-common_crawl-high-quality_20_history_and_geography
+      - ingredient1-common_crawl-high-quality_20_home_and_hobbies
+      - ingredient1-common_crawl-high-quality_20_industrial
+      - ingredient1-common_crawl-high-quality_20_literature
+      - ingredient1-common_crawl-high-quality_20_politics
+      - ingredient1-common_crawl-high-quality_20_religion
+      - ingredient1-common_crawl-high-quality_20_science_math_and_technology
+      - ingredient1-common_crawl-high-quality_20_social_life
+      - ingredient1-common_crawl-high-quality_20_software
+      - ingredient1-common_crawl-high-quality_20_software_development
+      - ingredient1-common_crawl-high-quality_20_sports_and_fitness
+      - ingredient1-common_crawl-high-quality_20_transportation
+      - ingredient1-common_crawl-high-quality_20_travel_and_tourism
+    weight: 0.2250       # 22.5%
+
+  # ============================================================
+  # STEM Web (5.0%)
+  # ============================================================
+  - name: stem-heavy-crawl
+    dirs: [ingredient1-stem-heavy-crawl]
+    weight: 0.0500       # 5.0%

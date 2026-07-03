@@ -1,0 +1,40 @@
+model:
+  tokenizer_path: configs/olmo3_vocab
+  attn_implementation: flash_attention_3
+
+data:
+  train_size: 1000000000000
+  dataloader_type: native
+  data_type: plaintext
+  max_seq_len: 4096
+  text_keys: text
+  drop_last: true
+
+train:
+  data_parallel_mode: fsdp2
+  ulysses_parallel_size: 1
+  global_batch_size: 16
+  micro_batch_size: 2
+  rmpad: false
+  rmpad_with_pos_ids: true
+  bsz_warmup_ratio: 0.007
+  dyn_bsz_margin: 0
+  dyn_bsz_buffer_size: 200
+  optimizer: adamw
+  lr: 2.0e-3
+  lr_warmup_ratio: 0.01
+  lr_decay_style: cosine
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  enable_mixed_precision: true
+  enable_gradient_checkpointing: false
+  enable_full_shard: true
+  enable_fsdp_offload: false
+  enable_activation_offload: false
+  init_device: meta
+  enable_full_determinism: false
+  empty_cache_steps: 500
+  ckpt_manager: dcp
+  save_steps: 100
+  save_hf_weights: true
+  wandb_project: FullAttnBaseline
