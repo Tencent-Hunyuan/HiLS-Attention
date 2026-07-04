@@ -2,11 +2,11 @@ export PYTHONPATH=./
 
 
 
-export MODEL_CONFIG="configs/swan_gpt_tiny/config_rope_full_theta10000_1B.json"
+export MODEL_CONFIG="configs/fullattn_tiny/config_rope_full_theta10000_1B.json"
 export CORPUS_PATH="${CORPUS_PATH:-data/dolma3_mix-6T-1025-500B}"
 export MAX_SEQ_LEN=8192
-export WANDB_NAME="rope-full-attn-swangpt-1B-300B-64gpu"
-export OUTPUT_DIR="${OUTPUT_DIR:-outputs/checkpoints/rope-full-attn-rope-swangpt-1B-300B-64gpu}"
+export WANDB_NAME="rope-fullattn-1B-300B-64gpu"
+export OUTPUT_DIR="${OUTPUT_DIR:-outputs/checkpoints/rope-fullattn-1B-300B-64gpu}"
 export MAX_STEPS=143000
 export SAVE_STEPS=5000
 export TRAIN_SIZE=300000000000

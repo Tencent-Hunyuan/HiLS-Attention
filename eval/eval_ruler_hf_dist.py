@@ -49,10 +49,10 @@ def resolve_model_class(config_path=None, checkpoint_path=None):
     if path and os.path.exists(path):
         with open(path, 'r') as f:
             model_type = json.load(f).get("model_type", "")
-    if model_type == "swangpt":
-        from models.SWANGPT.modeling_swan_gpt import SWANGPTForCausalLM
-        print("Using SWANGPT implementation")
-        return SWANGPTForCausalLM, model_type
+    if model_type == "fullattn":
+        from models.FullAttn.modeling_fullattn import FullAttnForCausalLM
+        print("Using FullAttn implementation")
+        return FullAttnForCausalLM, model_type
     elif "olmo" in model_type:
         from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
         print("Using OLMo LHSA implementation")
@@ -120,13 +120,13 @@ def main(args):
     
     # ==================== 模型加载（HF方式，和eval_ppl_hf一致） ====================
     ModelClass, model_type = resolve_model_class(args.config_path, args.checkpoint_path)
-    if model_type == "swangpt":
+    if model_type == "fullattn":
         from transformers import Qwen3Config
-        class SWANGPTConfig(Qwen3Config):
-            model_type = "swangpt"
-        AutoConfig.register("swangpt", SWANGPTConfig)
-        ModelClass.config_class = SWANGPTConfig
-        AutoModelForCausalLM.register(SWANGPTConfig, ModelClass)
+        class FullAttnConfig(Qwen3Config):
+            model_type = "fullattn"
+        AutoConfig.register("fullattn", FullAttnConfig)
+        ModelClass.config_class = FullAttnConfig
+        AutoModelForCausalLM.register(FullAttnConfig, ModelClass)
     else:
         AutoConfig.register("flash_hsa", HSAConfig)
         ModelClass.config_class = HSAConfig
@@ -143,9 +143,9 @@ def main(args):
     if args.checkpoint_path:
         if args.auto_insert_lmk:
             model_kwargs['auto_insert_lmk'] = True
-        # 当 checkpoint 目录下的 config.json 的 model_type 与实际不一致时（如 swangpt 的 hf_ckpt 中 model_type 为 qwen3），
-        # 需要用 config_path 提供的正确 config 来覆盖，确保 from_pretrained 能找到正确的注册模型类
-        if model_type == "swangpt" and args.config_path:
+        # When the checkpoint config has a different model_type, use config_path to load the correct config.
+        # This ensures from_pretrained can resolve the registered model class.
+        if model_type == "fullattn" and args.config_path:
             config = AutoConfig.from_pretrained(args.config_path)
             model = AutoModelForCausalLM.from_pretrained(args.checkpoint_path, config=config, **model_kwargs)
         else:

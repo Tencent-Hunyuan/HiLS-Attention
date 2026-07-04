@@ -66,8 +66,16 @@ if _hsa_resolved[0] is not None:
     HiLSForCausalLM.config_class = OpenCompassHSAConfig
     AutoModelForCausalLM.register(OpenCompassHSAConfig, HiLSForCausalLM, exist_ok=True)
 
-from models.SWANGPT.modeling_swan_gpt import SWANGPTForCausalLM
-AutoModelForCausalLM.register(Qwen3Config, SWANGPTForCausalLM, exist_ok=True)
+from models.FullAttn.modeling_fullattn import FullAttnForCausalLM
+
+
+class OpenCompassFullAttnConfig(Qwen3Config):
+    model_type = "fullattn"
+
+
+AutoConfig.register("fullattn", OpenCompassFullAttnConfig, exist_ok=True)
+FullAttnForCausalLM.config_class = OpenCompassFullAttnConfig
+AutoModelForCausalLM.register(OpenCompassFullAttnConfig, FullAttnForCausalLM, exist_ok=True)
 
 def _import_opencompass_main():
     try:

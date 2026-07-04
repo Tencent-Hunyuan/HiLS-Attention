@@ -1,4 +1,4 @@
-export MODEL_CONFIG="configs/swan_nsa/config_full_nsa_rope_345M.json"
+export MODEL_CONFIG="configs/nsa/config_full_nsa_rope_345M.json"
 export CORPUS_PATH="${CORPUS_PATH:-data/dolma3_mix-6T-1025-partial-tokenized}"
 export MAX_SEQ_LEN=8192
 export WANDB_NAME="nsa_rope_fix_full_345M_dist"

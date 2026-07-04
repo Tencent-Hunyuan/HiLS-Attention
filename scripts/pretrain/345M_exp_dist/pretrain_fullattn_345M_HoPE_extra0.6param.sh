@@ -1,7 +1,7 @@
 export PYTHONPATH=./
 
 
-export MODEL_CONFIG="configs/flash_hsa/config_fullattn_HoPE_345M_extra0.6param.json"
+export MODEL_CONFIG="configs/fullattn_tiny/config_fullattn_HoPE_345M_extra0.6param.json"
 export CORPUS_PATH="${CORPUS_PATH:-data/dolma3_mix-6T-1025-partial-tokenized}"
 export MAX_SEQ_LEN=8192
 export WANDB_NAME="fullattn_HOPE_extra0.6param"

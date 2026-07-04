@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import FlashHiLS, SWANGPT, DRT, SWANNSA, DEEPSEEK
+from . import FlashHiLS, FullAttn, DRT, NSA
 
 __all__ = [
     "FlashHiLS",
-    "SWANGPT",
-    "SWANNSA",
+    "FullAttn",
+    "NSA",
     "DRT",
-    "DEEPSEEK",
 ]

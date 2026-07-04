@@ -1,6 +1,6 @@
 export PYTHONPATH=./
 
-export MODEL_CONFIG="configs/swan_gpt_tiny/config_rope_full_theta10000_345M_256K.json"
+export MODEL_CONFIG="configs/fullattn_tiny/config_rope_full_theta10000_345M_256K.json"
 export MODEL_PATH="${MODEL_PATH:-outputs/checkpoints/rope_full_theta10000_345M_dist/checkpoints/global_step_30000/hf_ckpt}"
 export CORPUS_PATH="${CORPUS_PATH:-data/dolma3_long_tokenized}"
 export MAX_SEQ_LEN=262144

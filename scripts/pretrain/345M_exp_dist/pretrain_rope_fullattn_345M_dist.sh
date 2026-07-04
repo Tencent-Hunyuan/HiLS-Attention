@@ -1,4 +1,4 @@
-export MODEL_CONFIG="configs/swan_gpt_tiny/config_rope_full_theta10000_345M.json"
+export MODEL_CONFIG="configs/fullattn_tiny/config_rope_full_theta10000_345M.json"
 export CORPUS_PATH="${CORPUS_PATH:-data/dolma3_mix-6T-1025-partial-tokenized}"
 export MAX_SEQ_LEN=8192
 export WANDB_NAME="rope_full_theta10000_345M_dist"

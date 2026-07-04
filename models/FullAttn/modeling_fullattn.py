@@ -1,10 +1,9 @@
 from turtle import position
-from typing import Callable, Literal, Optional, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
 
 import torch
+from typing import Literal
 from torch import nn
-import torch.nn.functional as F
-from einops import rearrange
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.generation import GenerationMixin
@@ -36,19 +35,23 @@ from veomni.utils.import_utils import (
 )
 from veomni.models.module_utils import GradientCheckpointingLayer
 
-# NSA相关导入
-from native_sparse_attention.ops.parallel import parallel_nsa
-from fla.ops.utils import mean_pooling
-from fla.modules import RotaryEmbedding 
 
 if is_torch_flex_attn_available():
     pass
 
 
 if is_liger_kernel_available():
-    from liger_kernel.transformers.rms_norm import LigerRMSNorm
     from liger_kernel.transformers.rope import liger_rotary_pos_emb
     from liger_kernel.transformers.swiglu import LigerSwiGLUMLP
+
+
+rms_norm_fn = None
+
+try:
+    from flash_attn.ops.triton.layer_norm import rms_norm_fn
+    USE_FLASH_ATTN_RMSNORM = True
+except ImportError:
+    USE_FLASH_ATTN_RMSNORM = False
 
 
 logger = logging.get_logger(__name__)
@@ -82,6 +85,29 @@ class Qwen3RMSNorm(nn.Module):
         return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
 
+class Qwen3FlashAttnRMSNorm(Qwen3RMSNorm):
+    def forward(self, hidden_states):
+        global rms_norm_fn
+        if rms_norm_fn is None:
+            try:
+                from flash_attn.ops.triton.layer_norm import rms_norm_fn as flash_attn_rms_norm_fn
+            except ImportError as exc:
+                raise ImportError(
+                    "flash_attn.ops.triton.layer_norm.rms_norm_fn is required for Qwen3FlashAttnRMSNorm."
+                ) from exc
+            rms_norm_fn = flash_attn_rms_norm_fn
+
+        hidden_shape = hidden_states.shape
+        hidden_states = hidden_states.reshape(-1, hidden_shape[-1])
+        hidden_states = rms_norm_fn(
+            hidden_states,
+            self.weight,
+            None,
+            eps=self.variance_epsilon,
+        )
+        return hidden_states.reshape(hidden_shape)
+
+
 class Qwen3MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -106,7 +132,25 @@ def rotate_half(x):
 
 
 def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
-    """Applies Rotary Position Embedding to the query and key tensors."""
+    """Applies Rotary Position Embedding to the query and key tensors.
+
+    Args:
+        q (`torch.Tensor`): The query tensor.
+        k (`torch.Tensor`): The key tensor.
+        cos (`torch.Tensor`): The cosine part of the rotary embedding.
+        sin (`torch.Tensor`): The sine part of the rotary embedding.
+        position_ids (`torch.Tensor`, *optional*):
+            Deprecated and unused.
+        unsqueeze_dim (`int`, *optional*, defaults to 1):
+            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
+            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
+            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
+            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
+            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
+            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
+    Returns:
+        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+    """
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
     q_embed = (q * cos) + (rotate_half(q) * sin)
@@ -177,8 +221,8 @@ class Qwen3Attention(nn.Module):
         self.o_proj = nn.Linear(
             config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
         )
-        self.q_norm = Qwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)
-        self.k_norm = Qwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)
+        self.q_norm = Qwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)  # unlike olmo, only on the head dim!
+        self.k_norm = Qwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)  # thus post q_norm does not need reshape
         self.enable_scaling = getattr(config, 'enable_scaling', False)
         if mode == 'swa':
             self.apply_rope = True
@@ -187,15 +231,7 @@ class Qwen3Attention(nn.Module):
             self.apply_rope = getattr(config, 'rope_full_attn', False)
             self.sliding_window = None
         
-
-        # # Debug: 打印Qwen3Attention层的所有关键参数
-        # print(
-        #     f"[Qwen3Attention Layer {layer_idx}] mode={mode}, Initialized with:\n"
-        #     f"  hidden_size={config.hidden_size}, num_heads={config.num_attention_heads}, num_kv_heads={config.num_key_value_heads}\n"
-        #     f"  head_dim={self.head_dim}, num_kv_groups={self.num_key_value_groups}\n"
-        #     f"  sliding_window={self.sliding_window}, apply_rope={self.apply_rope}\n"
-        #     f"  attention_bias={config.attention_bias}, attention_dropout={self.attention_dropout}"
-        # )
+        print(f'init Qwen3Attention, layer_idx: {layer_idx}, mode: {mode}, apply_rope: {self.apply_rope}, sliding_window: {self.sliding_window}')
 
     def forward(
         self,
@@ -211,21 +247,30 @@ class Qwen3Attention(nn.Module):
         hidden_shape = (*input_shape, -1, self.head_dim)
 
         query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2) #(B, h, L, d)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         cos, sin = position_embeddings
         if self.apply_rope:
             query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+            # assert not torch.allclose(q_rot, query_states, atol=1e-5)
+            # assert not torch.allclose(k_rot, key_states, atol=1e-5)
+            # query_states = q_rot
+            # key_states = k_rot
 
         if self.sliding_window is None and not self.training and self.enable_scaling:
             a = 362
             scaling_factor = torch.log(a + position_ids) / torch.log(torch.tensor(a, dtype=hidden_states.dtype, device=hidden_states.device))
+            # (B, L)
             query_states = query_states * scaling_factor.unsqueeze(1).unsqueeze(-1)
 
         if past_key_value is not None:
+            # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            # if self.sliding_window is not None:
+            #     key_states = key_states[:, :, -self.sliding_window :, :]
+            #     value_states = value_states[:, :, -self.sliding_window :, :]
 
         attention_interface: Callable = eager_attention_forward
         if self.config._attn_implementation != "eager":
@@ -237,6 +282,8 @@ class Qwen3Attention(nn.Module):
             else:
                 attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
 
+        # for debug
+        # print(f'layer idx: {self.layer_idx}, apply rope: {self.apply_rope}, sliding window: {self.sliding_window}')
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
@@ -245,7 +292,7 @@ class Qwen3Attention(nn.Module):
             attention_mask,
             dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling,
-            sliding_window=self.sliding_window,
+            sliding_window=self.sliding_window,  # diff with Llama
             **kwargs,
         )
 
@@ -254,234 +301,11 @@ class Qwen3Attention(nn.Module):
         return attn_output, attn_weights
 
 
-class NativeSparseAttention(nn.Module):
-
-    def __init__(
-        self,
-        hidden_size: int = 2048,
-        num_heads: int = 64,
-        num_kv_heads: Optional[int] = 4,
-        head_dim: int = 64,
-        qkv_bias: bool = False,
-        block_size: Optional[int] = 64,
-        block_counts: Optional[Union[torch.LongTensor, int]] = 16,
-        window_size: Optional[int] = 512,
-        rope_theta: Optional[float] = 10000.,
-        max_position_embeddings: Optional[int] = None,
-        layer_idx: int = None,
-        use_rope: bool = True  # 新增参数：是否使用RoPE
-    ):
-        super().__init__()
-
-        self.hidden_size = hidden_size
-        self.num_heads = num_heads
-        if num_kv_heads is None:
-            self.num_kv_heads = self.num_heads
-        else:
-            self.num_kv_heads = num_kv_heads
-        self.num_kv_groups = num_heads // self.num_kv_heads
-        self.head_dim = head_dim
-        self.kv_dim = self.num_kv_heads * self.head_dim
-        self.qkv_bias = qkv_bias
-
-        self.block_size = block_size
-        self.block_counts = block_counts
-        self.window_size = window_size
-        self.rope_theta = rope_theta
-        self.max_position_embeddings = max_position_embeddings
-        self.layer_idx = layer_idx
-        self.use_rope = use_rope
-
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=self.qkv_bias)
-        self.k_proj = nn.Linear(self.hidden_size, self.kv_dim, bias=self.qkv_bias)
-        self.v_proj = nn.Linear(self.hidden_size, self.kv_dim, bias=self.qkv_bias)
-        self.g_proj = nn.Linear(self.hidden_size, self.num_heads * 3, bias=False)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
-
-        # --- NSA kernel q-head padding ---
-        # The native_sparse_attention kernel requires the q/kv head ratio (group
-        # size) to be a multiple of ``nsa_kernel_min_group_size`` (16). When the
-        # real group size (num_heads / num_kv_heads) does not satisfy this, we
-        # pad the q heads (and the corresponding gate values) up to the next
-        # multiple of 16 at runtime, run the kernel on the padded tensors, and
-        # slice the output back to the real group size. All pad slots have
-        # gate value 0 so they do not affect the real heads.
-        assert self.num_heads % self.num_kv_heads == 0, (
-            f"num_heads ({self.num_heads}) must be divisible by "
-            f"num_kv_heads ({self.num_kv_heads})."
-        )
-        self.nsa_kernel_min_group_size = 16
-        self.real_group_size = self.num_heads // self.num_kv_heads
-        # round real_group_size up to a multiple of nsa_kernel_min_group_size.
-        self.padded_group_size = (
-            (self.real_group_size + self.nsa_kernel_min_group_size - 1)
-            // self.nsa_kernel_min_group_size
-            * self.nsa_kernel_min_group_size
-        )
-        self.pad_per_group = self.padded_group_size - self.real_group_size
-        self.padded_num_heads = self.padded_group_size * self.num_kv_heads
-        # --- end NSA kernel q-head padding ---
-
-        # NOTE: We deliberately do NOT instantiate any RotaryEmbedding inside the
-        # NSA block. The fla RotaryEmbedding has a meta-init issue (inv_freq is
-        # not re-computed on real device after meta -> cuda materialization),
-        # which silently breaks RoPE during training launched with init_device=meta.
-        # Instead, RoPE (cos, sin) is produced once by the model-level
-        # Qwen3RotaryEmbedding (which has the reinit fix) and forwarded into
-        # this layer via ``position_embeddings``. See ``forward`` below.
-        self.rotary = None
-
-        # # Debug: 打印NSA层的所有关键参数
-        # print(
-        #     f"[NSA Layer {layer_idx}] Initialized with:\n"
-        #     f"  hidden_size={self.hidden_size}, num_heads={self.num_heads}, num_kv_heads={self.num_kv_heads}\n"
-        #     f"  head_dim={self.head_dim}, qkv_bias={self.qkv_bias}\n"
-        #     f"  block_size={self.block_size}, block_counts={self.block_counts}, window_size={self.window_size}\n"
-        #     f"  rope_theta={self.rope_theta}, max_position_embeddings={self.max_position_embeddings}"
-        # )
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        output_attentions: bool = False,
-        use_cache: bool = False,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        if attention_mask is not None:
-            assert len(attention_mask.shape) == 2, (
-                "Expected attention_mask as a 0-1 matrix with shape [batch_size, seq_len] "
-                "for padding purposes (0 indicating padding). "
-                "Arbitrary attention masks of shape [batch_size, seq_len, seq_len] are not allowed."
-            )
-        # print(f"[NSA Layer {self.layer_idx}] use_rope={self.use_rope}")
-        batch_size, seq_len, _ = hidden_states.size()
-        past_key_values = None # DEBUG for eval
-        q = rearrange(self.q_proj(hidden_states), '... (h d) -> ... h d', d=self.head_dim)
-        k = rearrange(self.k_proj(hidden_states), '... (h d) -> ... h d', d=self.head_dim)
-        v = rearrange(self.v_proj(hidden_states), '... (h d) -> ... h d', d=self.head_dim)
-        g = rearrange(self.g_proj(hidden_states), '... (h d) -> ... h d', d=3)
-        g_cmp, g_slc, g_swa = g.sigmoid().unbind(-1)
-
-        cu_seqlens = kwargs.get('cu_seqlens', None)
-
-        seqlen_offset, max_seqlen = 0, seq_len
-        if past_key_values is not None:
-            seqlen_offset = past_key_values.get_seq_length(self.layer_idx)
-            max_seqlen = q.shape[1] + seqlen_offset
-
-            if attention_mask is not None:
-                # to deliminate the offsets of padding tokens
-                seqlen_offset = (seqlen_offset + attention_mask.sum(-1) - attention_mask.shape[-1]).clamp(min=0)
-                max_seqlen = q.shape[1] + max(seqlen_offset)
-
-        if self.max_position_embeddings is not None:
-            max_seqlen = max(max_seqlen, self.max_position_embeddings)
-        
-        if self.use_rope:
-            assert position_embeddings is not None, (
-                "NativeSparseAttention with use_rope=True requires "
-                "position_embeddings (cos, sin) to be passed in from the model. "
-                "Make sure SWANNSAModel forwards position_embeddings to NSA layers."
-            )
-            cos, sin = position_embeddings
-            # apply_rotary_pos_emb expects (q, k) in [B, H, T, D]; here q/k are [B, T, H, D].
-            q = q.transpose(1, 2)
-            k = k.transpose(1, 2)
-            q, k = apply_rotary_pos_emb(q, k, cos, sin)
-            q = q.transpose(1, 2).contiguous()
-            k = k.transpose(1, 2).contiguous()
-
-        if past_key_values is not None:
-            cache_has_content = past_key_values.get_seq_length(self.layer_idx) > 0
-            k_cached, v_cached = past_key_values.update(
-                attn_state=(k.flatten(-2, -1), v.flatten(-2, -1)),
-                layer_idx=self.layer_idx,
-                offset=seq_len,
-                cache_kwargs=dict(window_size=self.window_size)
-            )['attn_state']
-            if cache_has_content:
-                k, v = k_cached, v_cached
-                k = rearrange(k, '... (h d) -> ... h d', d=self.head_dim)
-                v = rearrange(v, '... (h d) -> ... h d', d=self.head_dim)
-
-        if self.pad_per_group > 0:
-            # q: [B, L, K*G, D] -> [B, L, K, G, D] -> pad last G dim -> [B, L, K, G', D] -> [B, L, K*G', D]
-            q_nsa = rearrange(q, 'b l (k g) d -> b l k g d', k=self.num_kv_heads)
-            q_nsa = F.pad(q_nsa, (0, 0, 0, self.pad_per_group), value=0.0)
-            q_nsa = rearrange(q_nsa, 'b l k g d -> b l (k g) d')
-
-            def _pad_gate(gate):
-                gate = rearrange(gate, 'b l (k g) -> b l k g', k=self.num_kv_heads)
-                gate = F.pad(gate, (0, self.pad_per_group), value=0.0)
-                return rearrange(gate, 'b l k g -> b l (k g)')
-
-            g_cmp_nsa = _pad_gate(g_cmp)
-            g_slc_nsa = _pad_gate(g_slc)
-            g_swa_nsa = _pad_gate(g_swa)
-        else:
-            q_nsa = q
-            g_cmp_nsa = g_cmp
-            g_slc_nsa = g_slc
-            g_swa_nsa = g_swa
-
-        o = parallel_nsa(
-            q=q_nsa,
-            k=k,
-            v=v,
-            g_cmp=g_cmp_nsa,
-            g_slc=g_slc_nsa,
-            g_swa=g_swa_nsa,
-            block_size=self.block_size,
-            block_counts=self.block_counts,
-            window_size=self.window_size,
-            cu_seqlens=cu_seqlens,
-            head_first=False
-        )
-
-        if self.pad_per_group > 0:
-            # o: [B, L, K*G', D] -> [B, L, K, G', D] -> take first real G -> [B, L, K*G, D]
-            o = rearrange(o, 'b l (k g) d -> b l k g d', k=self.num_kv_heads)
-            o = o[:, :, :, :self.real_group_size, :]
-            o = rearrange(o, 'b l k g d -> b l (k g) d')
-
-        o = o.reshape(batch_size, seq_len, -1)
-        o = self.o_proj(o)
-
-        if not output_attentions:
-            attentions = None
-
-        return o, attentions, past_key_values
-
-
-
 class Qwen3DecoderLayer(GradientCheckpointingLayer):
-    def __init__(self, config: Qwen3Config, layer_idx: int, mode: Literal['swa', 'full-attn', 'nsa'] = 'swa'):
+    def __init__(self, config: Qwen3Config, layer_idx: int, mode: Literal['swa', 'full-attn'] = 'swa'):
         super().__init__()
         self.hidden_size = config.hidden_size
-        
-        # 根据mode选择不同的注意力层
-        if mode == 'nsa':
-            # self.self_attn = NativeSparseAttention(config=config, layer_idx=layer_idx)
-            self.self_attn = NativeSparseAttention(
-                                hidden_size=config.hidden_size,
-                                num_heads=config.num_attention_heads,
-                                num_kv_heads=config.nsa_num_key_value_heads,
-                                head_dim=config.hidden_size // config.num_attention_heads,
-                                qkv_bias=config.attention_bias,
-                                block_size=getattr(config, 'nsa_block_size', 64),
-                                block_counts=getattr(config, 'nsa_block_counts', 32),
-                                window_size=getattr(config, 'nsa_window_size', 512),
-                                rope_theta=config.rope_theta,
-                                max_position_embeddings=config.max_position_embeddings,
-                                layer_idx=layer_idx,
-                                use_rope=config.nsa_use_rope
-                            ) 
-        else:
-            self.self_attn = Qwen3Attention(config=config, layer_idx=layer_idx, mode=mode)
-        
+        self.self_attn = Qwen3Attention(config=config, layer_idx=layer_idx, mode=mode)
         self.mlp = Qwen3MLP(config)
         self.input_layernorm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -496,7 +320,7 @@ class Qwen3DecoderLayer(GradientCheckpointingLayer):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
@@ -504,41 +328,17 @@ class Qwen3DecoderLayer(GradientCheckpointingLayer):
         hidden_states = self.input_layernorm(hidden_states)
 
         # Self Attention
-        # hidden_states, self_attn_weights = self.self_attn(
-        #     hidden_states=hidden_states,
-        #     attention_mask=attention_mask,
-        #     position_ids=position_ids,
-        #     past_key_value=past_key_value,
-        #     output_attentions=output_attentions,
-        #     use_cache=use_cache,
-        #     cache_position=cache_position,
-        #     position_embeddings=position_embeddings,
-        #     **kwargs,
-        # )
-        if isinstance(self.self_attn, NativeSparseAttention):
-            # NSA层：使用不同的参数和返回值
-            hidden_states, self_attn_weights, _ = self.self_attn(
-                hidden_states=hidden_states,
-                attention_mask=attention_mask,
-                past_key_values=past_key_value,  # 注意参数名不同
-                output_attentions=output_attentions,
-                use_cache=use_cache,
-                position_embeddings=position_embeddings,
-                **kwargs,
-            )
-        else:
-            # SWA层：保持原样
-            hidden_states, self_attn_weights = self.self_attn(
-                hidden_states=hidden_states,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_value=past_key_value,
-                output_attentions=output_attentions,
-                use_cache=use_cache,
-                cache_position=cache_position,
-                position_embeddings=position_embeddings,
-                **kwargs,
-            )
+        hidden_states, self_attn_weights = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            output_attentions=output_attentions,
+            use_cache=use_cache,
+            cache_position=cache_position,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
         hidden_states = residual + hidden_states
 
         # Fully Connected
@@ -557,6 +357,7 @@ class Qwen3DecoderLayer(GradientCheckpointingLayer):
 class Qwen3RotaryEmbedding(nn.Module):
     def __init__(self, config: Qwen3Config, device=None):
         super().__init__()
+        # BC: "rope_type" was originally "type"
         if hasattr(config, "rope_scaling") and config.rope_scaling is not None:
             self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
         else:
@@ -571,7 +372,9 @@ class Qwen3RotaryEmbedding(nn.Module):
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.original_inv_freq = self.inv_freq
+        # print(f'self.inv_freq: {self.inv_freq}, {self.inv_freq[None, :, None]}')
         self.reinit = False
+
 
     @torch.no_grad()
     def forward(self, x, position_ids):
@@ -581,9 +384,12 @@ class Qwen3RotaryEmbedding(nn.Module):
             self.register_buffer("inv_freq", inv_freq, persistent=False)
         inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
         position_ids_expanded = position_ids[:, None, :].float()
+        # print(f'self.inv_freq: {self.inv_freq[None, :, None]}')
+        # print(f'fwd: pos_ids: {position_ids}')
+        # print(f'inv_freq: {inv_freq_expanded}')
 
         device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
-        with torch.autocast(device_type=device_type, enabled=False):
+        with torch.autocast(device_type=device_type, enabled=False):  # Force float32
             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
             emb = torch.cat((freqs, freqs), dim=-1)
             cos = emb.cos() * self.attention_scaling
@@ -644,25 +450,70 @@ class Qwen3PreTrainedModel(PreTrainedModel):
 QWEN3_INPUTS_DOCSTRING = r"""
     Args:
         input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
-            Indices of input sequence tokens in the vocabulary.
-        attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Mask to avoid performing attention on padding token indices.
+            Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you provide
+            it.
+
+            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
+            [`PreTrainedTokenizer.__call__`] for details.
+
+            [What are input IDs?](../glossary#input-ids)
+        attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length) or `BlockMask`, *optional*):
+            Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
+
+            - 1 for tokens that are **not masked**,
+            - 0 for tokens that are **masked**.
+
+            If the model is configured to use flex_attention, it will attempt to convert the mask Tensor into a BlockMask,
+            but you can also pass a `BlockMask` object directly here.
+
+            [What are attention masks?](../glossary#attention-mask)
+
+            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
+            [`PreTrainedTokenizer.__call__`] for details.
+
+            If `past_key_values` is used, optionally only the last `input_ids` have to be input (see
+            `past_key_values`).
+
+            If you want to change padding behavior, you should read [`modeling_opt._prepare_decoder_attention_mask`]
+            and modify to your needs. See diagram 1 in [the paper](https://arxiv.org/abs/1910.13461) for more
+            information on the default strategy.
+
+            - 1 indicates the head is **not masked**,
+            - 0 indicates the head is **masked**.
         position_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Indices of positions of each input sequence tokens in the position embeddings.
+            Indices of positions of each input sequence tokens in the position embeddings. Selected in the range `[0,
+            config.n_positions - 1]`.
+
+            [What are position IDs?](../glossary#position-ids)
         past_key_values (`Cache`, *optional*):
-            Pre-computed hidden-states that can be used to speed up sequential decoding.
+            Pre-computed hidden-states (key and values in the self-attention blocks and in the cross-attention
+            blocks) that can be used to speed up sequential decoding. This typically consists in the `past_key_values`
+            returned by the model at a previous stage of decoding, when `use_cache=True` or `config.use_cache=True`.
+
+            It is a [`~cache_utils.Cache`] instance. For more details, see our [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
+
+            If `past_key_values` are used, the user can optionally input only the last `input_ids` (those that don't
+            have their past key value states given to this model) of shape `(batch_size, 1)` instead of all `input_ids`
+            of shape `(batch_size, sequence_length)`.
         inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
-            Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation.
+            Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
+            is useful if you want more control over how to convert `input_ids` indices into associated vectors than the
+            model's internal embedding lookup matrix.
         use_cache (`bool`, *optional*):
-            If set to `True`, `past_key_values` key value states are returned.
+            If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
+            `past_key_values`).
         output_attentions (`bool`, *optional*):
-            Whether or not to return the attentions tensors of all attention layers.
+            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
+            tensors for more detail.
         output_hidden_states (`bool`, *optional*):
-            Whether or not to return the hidden states of all layers.
+            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
+            more detail.
         return_dict (`bool`, *optional*):
-            Whether or not to return a `ModelOutput` instead of a plain tuple.
+            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
         cache_position (`torch.LongTensor` of shape `(sequence_length)`, *optional*):
-            Indices depicting the position of the input sequence tokens in the sequence.
+            Indices depicting the position of the input sequence tokens in the sequence. Contrarily to `position_ids`,
+            this tensor is not affected by padding. It is used to update the cache in the correct position and to infer
+            the complete sequence length.
 """
 
 
@@ -670,10 +521,12 @@ QWEN3_INPUTS_DOCSTRING = r"""
     "The bare Qwen3 Model outputting raw hidden-states without any specific head on top.",
     QWEN3_START_DOCSTRING,
 )
-class SWANNSAModel(Qwen3PreTrainedModel):
+class FullAttnModel(Qwen3PreTrainedModel):
     """
-    FullAttn-derived model with NSA layers replacing full attention layers.
-    It alternates SWA layers and NSA layers according to full_attn_interleave.
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`Qwen3DecoderLayer`]
+
+    Args:
+        config: Qwen3Config
     """
 
     def __init__(self, config: Qwen3Config):
@@ -683,18 +536,11 @@ class SWANNSAModel(Qwen3PreTrainedModel):
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.full_attn_interleave = config.full_attn_interleave
-        
-        def layer_type(layer_idx: int) -> Literal['swa', 'nsa']:
-            """
-            确定每层的注意力类型：
-            - 每full_attn_interleave层使用NSA（替代原来的full-attn）
-            - 其余层使用SWA
-            """
+        def layer_type(layer_idx: int) -> Literal['swa', 'full-attn']:
             if self.full_attn_interleave > 0 and (layer_idx % self.full_attn_interleave == self.full_attn_interleave - 1):
-                return 'nsa'  # 原来是full-attn，现在替换为nsa
+                return 'full-attn'
             else:
                 return 'swa'
-        
         self.layers = nn.ModuleList(
             [Qwen3DecoderLayer(config, layer_idx, mode=layer_type(layer_idx)) for layer_idx in range(config.num_hidden_layers)]
         )
@@ -742,6 +588,7 @@ class SWANNSAModel(Qwen3PreTrainedModel):
             )
             use_cache = False
 
+        # TODO (joao): remove this exception in v4.56 -- it exists for users that try to pass a legacy cache
         if not isinstance(past_key_values, (type(None), Cache)):
             raise ValueError("The `past_key_values` should be either a `Cache` object or `None`.")
 
@@ -759,6 +606,25 @@ class SWANNSAModel(Qwen3PreTrainedModel):
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
+
+        # It may already have been prepared by e.g. `generate`
+        # if not isinstance(causal_mask_mapping := attention_mask, dict):
+        #     # Prepare mask arguments
+        #     mask_kwargs = {
+        #         "config": self.config,
+        #         "input_embeds": inputs_embeds,
+        #         "attention_mask": attention_mask,
+        #         "cache_position": cache_position,
+        #         "past_key_values": past_key_values,
+        #         "position_ids": position_ids,
+        #     }
+        #     # Create the masks
+        #     causal_mask_mapping = {
+        #         "full_attention": create_causal_mask(**mask_kwargs),
+        #     }
+        #     # The sliding window alternating layers are not always activated depending on the config
+        #     if self.has_sliding_layers:
+        #        causal_mask_mapping["sliding_attention"] = create_sliding_window_causal_mask(**mask_kwargs)
 
         hidden_states = inputs_embeds
 
@@ -811,18 +677,14 @@ class SWANNSAModel(Qwen3PreTrainedModel):
 class KwargsForCausalLM(FlashAttentionKwargs): ...
 
 
-class SWANNSAForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
-    """
-    FullAttn with NSA for causal language modeling.
-    NSA layers replace the original full attention layers.
-    """
+class FullAttnForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
 
     def __init__(self, config):
         super().__init__(config)
-        self.model = SWANNSAModel(config)
+        self.model = FullAttnModel(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
@@ -867,14 +729,35 @@ class SWANNSAForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
     ) -> CausalLMOutputWithPast:
         r"""
             labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-                Labels for computing the masked language modeling loss.
+                Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
+                config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
+                (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
 
             logits_to_keep (`int` or `torch.Tensor`, *optional*):
-                If an `int`, compute logits for the last `logits_to_keep` tokens.
+                If an `int`, compute logits for the last `logits_to_keep` tokens. If `0`, calculate logits for all
+                `input_ids` (special case). Only last token logits are needed for generation, and calculating them only for that
+                token can save memory, which becomes pretty significant for long sequences or large vocabulary size.
+                If a `torch.Tensor`, must be 1D corresponding to the indices to keep in the sequence length dimension.
+                This is useful when using packed tensor format (single dimension for batch and sequence length).
 
         Returns:
-            CausalLMOutputWithPast
-        """
+
+        Example:
+
+        ```python
+        >>> from transformers import AutoTokenizer, Qwen3ForCausalLM
+
+        >>> model = Qwen3ForCausalLM.from_pretrained("Qwen/Qwen3-8B")
+        >>> tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B")
+
+        >>> prompt = "Hey, are you conscious? Can you talk to me?"
+        >>> inputs = tokenizer(prompt, return_tensors="pt")
+
+        >>> # Generate
+        >>> generate_ids = model.generate(inputs.input_ids, max_length=30)
+        >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
+        ```"""
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -924,14 +807,15 @@ class SWANNSAForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
 
 if is_liger_kernel_available():
     apply_rotary_pos_emb = liger_rotary_pos_emb
-    Qwen3RMSNorm = LigerRMSNorm
     Qwen3MLP = LigerSwiGLUMLP
     logger.info_rank0("Apply liger kernel to Qwen3.")
+if USE_FLASH_ATTN_RMSNORM:
+    Qwen3RMSNorm = Qwen3FlashAttnRMSNorm
+    logger.info_rank0("Apply flash-attn RMSNorm kernel to Qwen3.")
 
 if is_torch_npu_available() and is_transformers_version_greater_or_equal_to("4.50.4"):
     from .npu_patch import apply_qwen3_npu_patch
 
     apply_qwen3_npu_patch()
 
-
-__all__ = ["SWANNSAForCausalLM", "SWANNSAModel", "Qwen3PreTrainedModel"]
+__all__ = ["FullAttnForCausalLM", "FullAttnModel", "Qwen3PreTrainedModel"]

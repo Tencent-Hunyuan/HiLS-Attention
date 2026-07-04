@@ -13,6 +13,6 @@ def register_flash_hsa_modeling(architecture: str):
         return DRTForCausalLM
 
 @MODEL_CONFIG_REGISTRY.register('hsa_swa')
-def register_swangpt_config():
+def register_hsa_swa_config():
     from .configuration_hsa_swa import HSASWAConfig
     return HSASWAConfig

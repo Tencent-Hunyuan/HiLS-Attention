@@ -717,7 +717,7 @@ class DRTForCausalLM(DRTPreTrainedModel, GenerationMixin):
             )
         else:
             # logits = self.lm_head(hidden_states.to(self.lm_head.weight.dtype)).float()
-            # 根据 logits_to_keep 对 hidden_states 进行切片，只计算需要的 logits（参考 SWANGPT）
+            # Slice hidden_states by logits_to_keep to compute only required logits, matching FullAttn behavior.
             if isinstance(logits_to_keep, int) and logits_to_keep > 0:
                 hidden_states = hidden_states[:, -logits_to_keep:, :]
             elif isinstance(logits_to_keep, torch.Tensor):
