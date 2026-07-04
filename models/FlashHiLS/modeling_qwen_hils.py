@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from .HoPE import HoPERotaryEmbedding
 import torch
 import math
-from .hsa_forward import hsa_causal_lm_forward, hsa_model_forward
 from torch import nn
 from .hils_attention import HiLSAttention
 from utils.flex_attn import flex_attn
@@ -42,7 +41,7 @@ from veomni.utils.import_utils import (
 from veomni.models.module_utils import GradientCheckpointingLayer
 from utils.landmark_utils import insert_special_tokens, create_position_ids_with_landmarks
 from .pope import PoPERotaryEmbWrapper
-from .hsa_forward import hsa_model_forward, hsa_causal_lm_forward
+from .hils_forward import hils_model_forward, hils_causal_lm_forward
 from ops.flex_attn_tilelang import flex_attn_tl
 
 
@@ -756,7 +755,7 @@ class HiLSModel(Qwen3PreTrainedModel):
         cache_position=None,
         **flash_attn_kwargs,
     ) -> BaseModelOutputWithPast:
-        return hsa_model_forward(
+        return hils_model_forward(
             self,
             input_ids,
             attention_mask,
@@ -906,7 +905,7 @@ class HiLSForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> CausalLMOutputWithPast:
-        return hsa_causal_lm_forward(
+        return hils_causal_lm_forward(
             self,
             input_ids,
             attention_mask,

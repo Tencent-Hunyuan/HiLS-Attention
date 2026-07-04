@@ -1,6 +1,6 @@
 {
     "architectures": [
-      "HSAForCausalLM"
+      "HiLSForCausalLM"
     ],
     "attention_dropout": 0.0,
     "bos_token_id": 100257,
@@ -11,7 +11,7 @@
     "intermediate_size": 4096,
     "max_position_embeddings": 8192,
     "max_window_layers": 16,
-    "model_type": "qwen_lhsa",
+    "model_type": "qwen_hils",
     "head_dim": 64,
     "num_attention_heads": 16,
     "hsa_heads": 16,
@@ -31,11 +31,7 @@
     "hsa_topk": 32,
     "_attn_implementation": "flash_attention_3",
     "enable_lmk_q_proj": false,
-    "enable_lmk_bias": true,
     "hsa_sliding_window": 512,
-    "unified_retrieval": false,
-    "retrieval_head_num": 16,
-    "groupwise_topk": false,
     "apply_hsa_rope": true,
     "enable_inrange_rope": true,
     "rope_context_length": 8192,

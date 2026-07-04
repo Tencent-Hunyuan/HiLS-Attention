@@ -279,7 +279,7 @@ class TestChunkAttnPoolCompact:
     """compact_lmk_k=True path of the fallback kernel.
 
     In this mode the kernel skips the P @ K GEMM and writes ``lmk_k = 0``;
-    only the entropy bias ``lmk_b`` is meaningful.  The caller (lhsa_layer)
+    only the entropy bias ``lmk_b`` is meaningful.  The caller (hils_layer)
     overrides ``lmk_k`` with the chunk-boundary K token.
 
     For backward, the kernel forces ``GradK_shared = 0`` regardless of the
@@ -379,7 +379,7 @@ class TestChunkAttnPoolCompact:
         The kernel hard-zeros ``GradK_shared`` in compact mode (see fallback
         line ~466 / v8 line ~230).  Therefore feeding a non-zero gradient
         into ``lmk_k`` must produce IDENTICAL d_mu_q / d_k to the case with
-        zero grad_lmk_k.  This is a critical invariant because lhsa_layer
+        zero grad_lmk_k.  This is a critical invariant because hils_layer
         passes the autograd-built grad_lmk_k unconditionally -- if it leaked
         through, downstream would silently train on a wrong objective.
         """

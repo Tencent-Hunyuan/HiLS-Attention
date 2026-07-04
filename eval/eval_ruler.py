@@ -51,7 +51,7 @@ def assert_close(prefix, ref, tri, ratio):
 # VeOmni Imports
 from veomni.models import build_foundation_model
 from veomni.checkpoint import build_checkpointer
-from models.FlashHiLS.configuration_hsa import HSAConfig
+from models.FlashHiLS.configuration_hils import HSAConfig
 from utils.landmark_utils import insert_special_tokens, create_position_ids_with_landmarks
 
 

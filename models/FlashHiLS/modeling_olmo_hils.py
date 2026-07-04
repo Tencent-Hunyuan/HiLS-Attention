@@ -4,12 +4,11 @@ from dataclasses import dataclass, field
 import torch
 import math
 from .HoPE import HoPERotaryEmbedding
-from .hsa_forward import hsa_causal_lm_forward, hsa_model_forward
 from torch import nn
 from .hils_attention import HiLSAttention as LandmarkHSA_base
 # from .lhsa_layer_pope_fused import LandmarkHSA as LandmarkHSA_pope
 from .lhsa_layer_pope_naive import LandmarkHSA as LandmarkHSA_naive
-from .configuration_hsa import HSAConfig
+from .configuration_hils import HSAConfig
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache
 from transformers.generation import GenerationMixin
@@ -44,7 +43,7 @@ from veomni.utils.import_utils import (
 
 from veomni.models.module_utils import GradientCheckpointingLayer
 from utils.landmark_utils import insert_special_tokens, create_position_ids_with_landmarks
-from .hsa_forward import hsa_model_forward, hsa_causal_lm_forward
+from .hils_forward import hils_model_forward, hils_causal_lm_forward
 from .pope import PoPERotaryEmbWrapper
 from ops.flex_attn_tilelang import flex_attn_tl
 
@@ -84,7 +83,7 @@ def resolve_olmo_head_dim(config: HSAConfig) -> int:
     config_head_dim = getattr(config, "head_dim", None)
     if config_head_dim != head_dim:
         logger.warning_once(
-            f"`olmo_lhsa` ignores config.head_dim={config_head_dim} and uses "
+            f"`olmo_hils` ignores config.head_dim={config_head_dim} and uses "
             f"hidden_size // num_attention_heads = {head_dim}."
         )
         config.head_dim = head_dim
@@ -709,27 +708,7 @@ class HiLSModel(Olmo3PreTrainedModel):
         cache_position: Optional[torch.LongTensor] = None,
         **flash_attn_kwargs: Unpack[FlashAttentionKwargs],
     ) -> BaseModelOutputWithPast:
-        
-        from .chunk_prefill import chunked_forward, DEFAULT_CHUNK_PREFILL_THRESHOLD
-        chunk_prefill_threshold = DEFAULT_CHUNK_PREFILL_THRESHOLD
-        if chunk_prefill_threshold > 0 and not self.training:
-            _seq_len = inputs_embeds.shape[1] if inputs_embeds is not None else (input_ids.shape[1] if input_ids is not None else 0)
-            if _seq_len > chunk_prefill_threshold:
-                return chunked_forward(
-                    model=self,
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    past_key_values=past_key_values,
-                    inputs_embeds=inputs_embeds,
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                    output_hidden_states=output_hidden_states,
-                    cache_position=cache_position,
-                    **flash_attn_kwargs,
-                )
-
-        return hsa_model_forward(
+        return hils_model_forward(
             self,
             input_ids,
             attention_mask,
@@ -974,7 +953,7 @@ class HiLSForCausalLM(Olmo3PreTrainedModel, GenerationMixin):
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs: Unpack[KwargsForCausalLM],
     ) -> CausalLMOutputWithPast:
-        return hsa_causal_lm_forward(
+        return hils_causal_lm_forward(
             self,
             input_ids,
             attention_mask,

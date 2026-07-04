@@ -8,7 +8,7 @@ Usage:
     python eval/eval_longbench2_hf.py \
         --checkpoint_path /path/to/hf_ckpt \
         --vocab_dir ./configs/olmo3_vocab/ \
-        --config_path configs/olmo3_7B/olmo3_lhsa_dropout.json \
+        --config_path configs/olmo3_7B/olmo3_hils_dropout.json \
         --local_dataset /path/to/longbench_v2.json \
         --max_input_tokens 65000 \
         --save_dir results/longbench2 \
@@ -30,7 +30,7 @@ from tqdm import tqdm
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
 
-from models.FlashHiLS.configuration_hsa import HSAConfig
+from models.FlashHiLS.configuration_hils import HSAConfig
 
 
 # ============================================================
@@ -57,10 +57,10 @@ def resolve_hsa_class(config_path=None, checkpoint_path=None):
             model_type = json.load(f).get("model_type", "")
     if "olmo" in model_type:
         from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
-        print("Using OLMo LHSA implementation")
+        print("Using OLMo HiLS implementation")
     else:
         from models.FlashHiLS.modeling_qwen_hils import HiLSForCausalLM
-        print("Using Qwen LHSA implementation")
+        print("Using Qwen HiLS implementation")
     return HiLSForCausalLM
 
 
@@ -72,7 +72,7 @@ def load_model(args, device):
       3. 如果只有 config_path，从 config 初始化随机权重 (debug 用)
     """
     HiLSForCausalLM = resolve_hsa_class(args.config_path, args.checkpoint_path)
-    AutoConfig.register("olmo_lhsa", HSAConfig)
+    AutoConfig.register("olmo_hils", HSAConfig)
     HiLSForCausalLM.config_class = HSAConfig
     AutoModelForCausalLM.register(HSAConfig, HiLSForCausalLM)
 

@@ -3,7 +3,6 @@ import sys
 import os
 import json
 import math
-from contextlib import contextmanager
 
 EVAL_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -27,23 +26,6 @@ from utils.landmark_utils import insert_special_tokens, create_position_ids_with
 from transformers import AutoConfig, AutoModelForCausalLM
 
 HF_CAUSAL_LM_MODEL_TYPES = frozenset({"olmo3"})
-
-
-@contextmanager
-def auto_chunk_threshold(threshold: int):
-    """Disable model-internal auto chunk prefill during manual segment prefill."""
-    try:
-        import models.FlashHiLS.chunk_prefill as chunk_prefill_module
-    except ImportError:
-        yield
-        return
-
-    saved = chunk_prefill_module.DEFAULT_CHUNK_PREFILL_THRESHOLD
-    chunk_prefill_module.DEFAULT_CHUNK_PREFILL_THRESHOLD = threshold
-    try:
-        yield
-    finally:
-        chunk_prefill_module.DEFAULT_CHUNK_PREFILL_THRESHOLD = saved
 
 
 def get_config_model_type(config_path):
@@ -72,22 +54,22 @@ def should_use_hf_model(args):
 def should_use_hf_loader(args):
     if should_use_hf_model(args):
         return True
-    return "lhsa" in read_model_type(args.config_path, args.checkpoint_path)
+    return "hils" in read_model_type(args.config_path, args.checkpoint_path)
 
 
-def is_lhsa_model(config_path=None, checkpoint_path=None):
-    return "lhsa" in read_model_type(config_path, checkpoint_path)
+def is_hils_model(config_path=None, checkpoint_path=None):
+    return "hils" in read_model_type(config_path, checkpoint_path)
 
 
 def load_hsa_config(config_path):
-    from models.FlashHiLS.configuration_hsa import HSAConfig
+    from models.FlashHiLS.configuration_hils import HSAConfig
 
     with open(config_path, "r", encoding="utf-8") as fin:
         return HSAConfig.from_dict(json.load(fin))
 
 
 def load_eval_config(config_path, checkpoint_path=None):
-    if is_lhsa_model(config_path, checkpoint_path):
+    if is_hils_model(config_path, checkpoint_path):
         return load_hsa_config(config_path)
     return AutoConfig.from_pretrained(config_path, trust_remote_code=True)
 
@@ -106,23 +88,23 @@ def _register_with_exist_ok(register_fn, *args):
 
 def register_hsa_model(config_path=None, checkpoint_path=None):
     model_type = read_model_type(config_path, checkpoint_path)
-    if "lhsa" not in model_type:
+    if "hils" not in model_type:
         return
     if "olmo" in model_type:
         from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
-        print("Using OLMo LHSA implementation")
+        print("Using OLMo HiLS implementation")
     else:
         from models.FlashHiLS.modeling_qwen_hils import HiLSForCausalLM
-        print("Using Qwen LHSA implementation")
+        print("Using Qwen HiLS implementation")
 
-    from models.FlashHiLS.configuration_hsa import HSAConfig
+    from models.FlashHiLS.configuration_hils import HSAConfig
 
-    HiLSForCausalLM.config_class = HSAConfig
-    for name in {model_type, "olmo_lhsa", "flash_hsa", "qwen_lhsa"}:
-        if not name:
-            continue
-        _register_with_exist_ok(AutoConfig.register, name, HSAConfig)
-    _register_with_exist_ok(AutoModelForCausalLM.register, HSAConfig, HiLSForCausalLM)
+    class EvalHSAConfig(HSAConfig):
+        model_type = model_type
+
+    HiLSForCausalLM.config_class = EvalHSAConfig
+    _register_with_exist_ok(AutoConfig.register, model_type, EvalHSAConfig)
+    _register_with_exist_ok(AutoModelForCausalLM.register, EvalHSAConfig, HiLSForCausalLM)
 
 
 def get_config_flag(config_path, key, default=False):
@@ -426,15 +408,14 @@ def forward_full_logits(
         kwargs["logits_to_keep"] = eval_last_k_tokens + 1
 
     cache_pos = torch.arange(0, seq_len, device=input_ids.device)
-    with auto_chunk_threshold(0):
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16), torch.no_grad():
-            result = model(
-                input_ids=input_ids,
-                cache_position=cache_pos,
-                use_cache=False,
-                position_ids=position_ids,
-                **kwargs,
-            )
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16), torch.no_grad():
+        result = model(
+            input_ids=input_ids,
+            cache_position=cache_pos,
+            use_cache=False,
+            position_ids=position_ids,
+            **kwargs,
+        )
     logits = result.logits
     if eval_last_k_tokens > 0:
         logits = logits[:, :-1, :]
@@ -482,34 +463,33 @@ def forward_chunk_prefill_logits(
     past_key_values = None
     answer_logits_list = []
 
-    with auto_chunk_threshold(0):
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16), torch.no_grad():
-            for seg_idx in range(num_segments):
-                start_idx = seg_idx * segment_size
-                end_idx = min((seg_idx + 1) * segment_size, seq_len)
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16), torch.no_grad():
+        for seg_idx in range(num_segments):
+            start_idx = seg_idx * segment_size
+            end_idx = min((seg_idx + 1) * segment_size, seq_len)
 
-                seg_input_ids = input_ids[:, start_idx:end_idx]
-                seg_cache_pos = torch.arange(start_idx, end_idx, device=device)
-                seg_pos_ids = position_ids[:, start_idx:end_idx] if position_ids is not None else None
-                seg_logits_to_keep = end_idx - start_idx if seg_idx >= first_answer_segment else 1
+            seg_input_ids = input_ids[:, start_idx:end_idx]
+            seg_cache_pos = torch.arange(start_idx, end_idx, device=device)
+            seg_pos_ids = position_ids[:, start_idx:end_idx] if position_ids is not None else None
+            seg_logits_to_keep = end_idx - start_idx if seg_idx >= first_answer_segment else 1
 
-                extra_kwargs = {}
-                if skip_hsa_prefill and seg_idx < first_answer_segment - 1:
-                    extra_kwargs["skip_hsa"] = True
+            extra_kwargs = {}
+            if skip_hsa_prefill and seg_idx < first_answer_segment - 1:
+                extra_kwargs["skip_hsa"] = True
 
-                out = model(
-                    input_ids=seg_input_ids,
-                    cache_position=seg_cache_pos,
-                    use_cache=True,
-                    past_key_values=past_key_values,
-                    logits_to_keep=seg_logits_to_keep,
-                    position_ids=seg_pos_ids,
-                    **extra_kwargs,
-                )
-                past_key_values = out.past_key_values
-                if seg_idx >= first_answer_segment:
-                    answer_logits_list.append(out.logits.cpu())
-                del out
+            out = model(
+                input_ids=seg_input_ids,
+                cache_position=seg_cache_pos,
+                use_cache=True,
+                past_key_values=past_key_values,
+                logits_to_keep=seg_logits_to_keep,
+                position_ids=seg_pos_ids,
+                **extra_kwargs,
+            )
+            past_key_values = out.past_key_values
+            if seg_idx >= first_answer_segment:
+                answer_logits_list.append(out.logits.cpu())
+            del out
 
     answer_region_logits = torch.cat(answer_logits_list, dim=1)
     del answer_logits_list

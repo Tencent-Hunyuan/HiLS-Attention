@@ -13,7 +13,7 @@ InfiniteLongLM/
 │       ├── modeling_olmo_hils.py    # OLMo3 + HiLS (main model)
 │       ├── modeling_qwen_hils.py    # Qwen3 + HiLS
 │       ├── hils_attention.py        # Core HiLS attention layer
-│       ├── configuration_hsa.py     # Model config
+│       ├── configuration_hils.py    # Model config
 │       └── ...
 ├── ops/                     # Custom Triton/TileLang kernels
 │   ├── hsa_fwd_bwd_*.py     # HSA forward/backward kernels
@@ -56,8 +56,8 @@ Key features:
 
 | Registry Name | Base Architecture | Description |
 |---|---|---|
-| `olmo_lhsa` | OLMo3 | OLMo3 + HiLS ([modeling_olmo_hils.py](models/FlashHiLS/modeling_olmo_hils.py)) |
-| `qwen_lhsa` | Qwen3 | Qwen3 + HiLS ([modeling_qwen_hils.py](models/FlashHiLS/modeling_qwen_hils.py)) |
+| `olmo_hils` | OLMo3 | OLMo3 + HiLS ([modeling_olmo_hils.py](models/FlashHiLS/modeling_olmo_hils.py)) |
+| `qwen_hils` | Qwen3 | Qwen3 + HiLS ([modeling_qwen_hils.py](models/FlashHiLS/modeling_qwen_hils.py)) |
 
 ## Quick Start
 
@@ -75,19 +75,19 @@ bash scripts/preprocess/build_olmo_pretrain_sampled_500B.sh
 
 ### Pre-Training
 
-Representative example — **LSA Interleave Unified** ([`scripts/pretrain/fair_comparison/pretrain_lsa_interleave_unified.sh`](scripts/pretrain/fair_comparison/pretrain_lsa_interleave_unified.sh)):
+Representative example — **HiLS-Attn HoPE with Prop. 3.1 and Q-Cal r=64**:
 
 ```bash
-export MODEL_CONFIG="configs/flash_hsa/config_lsa_unified.json"
+export MODEL_CONFIG="configs/hils_attention/config_hils_attn_8KA2K_HoPE_345M_prop3p1_qcal_r64.json"
 export CORPUS_PATH="/path/to/tokenized/data"
 export MAX_SEQ_LEN=8192
-export WANDB_NAME="lsa-interleave-unified"
+export WANDB_NAME="hils_attn_8KA2K_HoPE_345M_prop3p1_qcal_r64"
 export OUTPUT_DIR="/path/to/checkpoints"
 
 bash scripts/pretrain/pretrain_ruler_task_5per.sh
 ```
 
-All pretrain experiment scripts are in [`scripts/pretrain/fair_comparison/`](scripts/pretrain/fair_comparison/), covering various HSA configurations (window sizes, topk values, interleave ratios, etc.).
+All pretrain experiment scripts are in [`scripts/pretrain/`](scripts/pretrain/), covering reported HiLS-Attention configurations and baselines.
 
 ### SFT (Supervised Fine-Tuning)
 
@@ -101,7 +101,7 @@ Convert a base model to HiLS structure and continue training:
 
 ```bash
 # Convert OLMo3 base model weights to HiLS
-bash scripts/convert_params/convert_olmo3_to_lhsa.sh
+bash scripts/convert_params/convert_olmo3_to_hils.sh
 
 # Run CPT
 bash scripts/cpt/CPT.sh
@@ -127,11 +127,11 @@ python eval/eval_ruler.py
 
 ## Key Configuration
 
-Example model config (`configs/flash_hsa/config_lsa_unified.json`):
+Example model config (`configs/hils_attention/config_hils_attn_8KA2K_HoPE_345M_prop3p1_qcal_r64.json`):
 
 ```json
 {
-  "model_type": "olmo_lhsa",
+  "model_type": "olmo_hils",
   "hidden_size": 1024,
   "num_hidden_layers": 24,
   "num_attention_heads": 16,
@@ -140,7 +140,6 @@ Example model config (`configs/flash_hsa/config_lsa_unified.json`):
   "chunk_size": 64,
   "hsa_topk": 32,
   "full_attn_interleave": 4,
-  "unified_retrieval": true,
   "enable_lmk_q_proj": true
 }
 ```
@@ -150,4 +149,3 @@ Key hyperparameters:
 - `chunk_size`: Landmark token interval for HiLS
 - `hsa_topk`: Number of top-k chunks to retrieve
 - `full_attn_interleave`: Ratio of full attention layers interleaved with HiLS layers
-- `unified_retrieval`: Whether to use shared retrieval across HiLS heads

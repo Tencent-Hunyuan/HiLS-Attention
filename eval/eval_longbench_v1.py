@@ -74,10 +74,10 @@ def resolve_hsa_class(config_path=None, checkpoint_path=None):
             model_type = json.load(f).get("model_type", "")
     if "olmo" in model_type:
         from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
-        print("Using OLMo LHSA implementation")
+        print("Using OLMo HiLS implementation")
     else:
         from models.FlashHiLS.modeling_qwen_hils import HiLSForCausalLM
-        print("Using Qwen LHSA implementation")
+        print("Using Qwen HiLS implementation")
     return HiLSForCausalLM
 
 
@@ -86,7 +86,7 @@ def _need_hsa(config_path=None, checkpoint_path=None):
     if path and os.path.exists(path):
         with open(path, 'r') as f:
             mt = json.load(f).get("model_type", "")
-        return "hsa" in mt or "lhsa" in mt
+        return "hsa" in mt or "hils" in mt
     return False
 
 
@@ -94,9 +94,9 @@ def load_model(args, device):
     use_hsa = _need_hsa(args.config_path, args.checkpoint_path)
 
     if use_hsa:
-        from models.FlashHiLS.configuration_hsa import HSAConfig
+        from models.FlashHiLS.configuration_hils import HSAConfig
         HiLSForCausalLM = resolve_hsa_class(args.config_path, args.checkpoint_path)
-        AutoConfig.register("olmo_lhsa", HSAConfig)
+        AutoConfig.register("olmo_hils", HSAConfig)
         HiLSForCausalLM.config_class = HSAConfig
         AutoModelForCausalLM.register(HSAConfig, HiLSForCausalLM)
 

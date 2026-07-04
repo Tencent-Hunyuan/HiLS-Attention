@@ -2,7 +2,7 @@ export PYTHONPATH=./
 
 DATA_TYPE=${DTYPE:-ruler_0.05}
 
-bash train.sh tasks/pretrain_with_ruler.py configs/baselines/full_attn_tiny.yaml \
+bash train.sh tasks/pretrain_with_ruler.py configs/training_recipes/pretrain_345M_8K_30B.yaml \
     --model.config_path $MODEL_CONFIG \
     --data.train_path $CORPUS_PATH \
     --data.max_seq_len $MAX_SEQ_LEN \

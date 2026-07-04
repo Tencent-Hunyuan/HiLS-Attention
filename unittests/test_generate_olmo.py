@@ -1,13 +1,13 @@
 """
-测试 OLMo LHSA (modeling_olmo_lhsa) 的 generate 功能。
-对比实验：generate 的 greedy decode 输出 vs 全量 forward 的 argmax 输出。
+Test OLMo HiLS generation.
+Compare greedy decoding from generate() with argmax from a full forward pass.
 
-验证逻辑：
-1. 用 model.generate() 对 prompt 做 greedy decode，得到输出 tokens
-2. 把 prompt + generated tokens 拼起来，外部插入 LMK，调用 model.forward() 全量 prefill
-3. 外部剔除 LMK 位置的 logits，做 argmax（带 shift），对比是否与 generate 输出一致
+Validation flow:
+1. Run model.generate() on the prompt with greedy decoding.
+2. Concatenate prompt and generated tokens, insert LMK tokens externally, and run a full prefill forward pass.
+3. Remove logits at LMK positions externally and compare shifted argmax outputs with generated tokens.
 
-参考：eval/eval_ppl_hf.py 中的评测方式，LMK 的插入和剔除完全在模型外部实现
+Reference: eval/eval_ppl_hf.py handles LMK insertion and removal outside the model.
 """
 
 import sys
@@ -25,12 +25,12 @@ if PROJECT_ROOT not in sys.path:
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 # 注册自定义模型到 transformers
-from models.FlashHiLS.configuration_hsa import HSAConfig
+from models.FlashHiLS.configuration_hils import HSAConfig
 from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
 
-# HSAConfig 内部 model_type="flash_hsa"，需要临时覆盖为 "olmo_lhsa" 以匹配注册名
-HSAConfig.model_type = "olmo_lhsa"
-AutoConfig.register("olmo_lhsa", HSAConfig)
+# Override the default model_type to match the registered OLMo HiLS name.
+HSAConfig.model_type = "olmo_hils"
+AutoConfig.register("olmo_hils", HSAConfig)
 HiLSForCausalLM.config_class = HSAConfig
 AutoModelForCausalLM.register(HSAConfig, HiLSForCausalLM)
 
@@ -38,7 +38,7 @@ from utils.landmark_utils import insert_special_tokens, create_position_ids_with
 
 
 DEFAULT_CKPT_PATH = (
-    "/Models/lhsa-olmo3-interleave-8KA1K-non-unified-no-noise-layerqk-64gpu-warmup1k/global_step_13000/hf_ckpt"
+    "/Models/hils-olmo3-interleave-8KA1K-non-unified-no-noise-layerqk-64gpu-warmup1k/global_step_13000/hf_ckpt"
 )
 
 
@@ -337,79 +337,6 @@ def run_forward_baseline_batch(model, input_ids, attention_mask, generated_ids, 
             "(param_reuse/base OLMo)。LMK 外插入的 padding/position_ids 需要单独实现。"
         )
     return run_forward_baseline_plain_batch(model, input_ids, attention_mask, generated_ids, device, drop_attention_mask)
-
-
-def run_forward_with_forced_chunk_prefill(
-    model,
-    tokenizer,
-    input_ids,
-    generated_ids,
-    device,
-    threshold,
-):
-    """
-    强制触发自动 chunk prefill 后运行同一套 forward baseline。
-
-    HiLSModel.forward 每次调用时会从 chunk_prefill 模块读取
-    DEFAULT_CHUNK_PREFILL_THRESHOLD，因此这里临时修改模块常量。
-    """
-    from models.FlashHiLS import chunk_prefill as chunk_prefill_module
-
-    saved_threshold = chunk_prefill_module.DEFAULT_CHUNK_PREFILL_THRESHOLD
-    chunk_prefill_module.DEFAULT_CHUNK_PREFILL_THRESHOLD = threshold
-    try:
-        return run_forward_baseline(model, tokenizer, input_ids, generated_ids, device)
-    finally:
-        chunk_prefill_module.DEFAULT_CHUNK_PREFILL_THRESHOLD = saved_threshold
-
-
-def compare_chunk_prefill_results(
-    full_logits,
-    chunk_logits,
-    tokenizer,
-    generated_ids,
-    max_items=10,
-):
-    """
-    对比普通 full forward 和 chunk prefill forward 的 generated-token logits。
-    """
-    print("\n  [Chunk Prefill 对比]")
-    if full_logits.shape != chunk_logits.shape:
-        print(f"    ❌ logits shape 不一致: full={full_logits.shape}, chunk={chunk_logits.shape}")
-        return False
-
-    full_pred = full_logits.argmax(dim=-1)
-    chunk_pred = chunk_logits.argmax(dim=-1)
-    match = full_pred == chunk_pred
-    match_count = match.sum().item()
-    total = match.numel()
-    max_abs_diff = (full_logits.float() - chunk_logits.float()).abs().max().item()
-    print(f"    argmax 匹配: {match_count}/{total} ({match_count / total * 100:.2f}%)")
-    print(f"    max_abs_logit_diff: {max_abs_diff:.6f}")
-
-    full_ppl, full_nll = compute_ppl_from_logits(full_logits, generated_ids)
-    chunk_ppl, chunk_nll = compute_ppl_from_logits(chunk_logits, generated_ids)
-    rel_ppl_diff = abs(full_ppl - chunk_ppl) / max(full_ppl, chunk_ppl, 1e-8)
-    print(f"    Full  PPL: {full_ppl:.6f} (avg NLL: {full_nll:.6f})")
-    print(f"    Chunk PPL: {chunk_ppl:.6f} (avg NLL: {chunk_nll:.6f})")
-    print(f"    PPL 相对差: {rel_ppl_diff:.6f}")
-
-    if match_count == total:
-        print("    ✅ Chunk prefill 与 full forward argmax 一致。")
-        return True
-
-    print("    ❌ Chunk prefill 与 full forward 存在 argmax 不一致。")
-    mismatch = torch.where(~match)[0][:max_items]
-    print(f"    不匹配位置 (最多显示前{max_items}个): {mismatch.tolist()}")
-    for idx in mismatch:
-        idx = idx.item()
-        full_tok = full_pred[idx].item()
-        chunk_tok = chunk_pred[idx].item()
-        print(
-            f"      pos {idx}: full={full_tok}('{tokenizer.decode([full_tok])}') "
-            f"chunk={chunk_tok}('{tokenizer.decode([chunk_tok])}')"
-        )
-    return False
 
 
 def compare_results(
@@ -742,9 +669,6 @@ def run_batched_consistency(model, tokenizer, prompts, device, args):
             drop_attention_mask=args.drop_attention_mask,
         )
 
-        if args.test_chunk_prefill:
-            print("  ⚠️ batch_size > 1 暂不运行 chunk prefill 对照；请用 batch_size=1 单独测。")
-
         for row in range(generated_ids.shape[0]):
             global_idx = batch_start + row + 1
             compare_generated_ids = _trim_generated_for_compare(
@@ -876,28 +800,6 @@ It would """
             print("\n[Step 2] 运行 model.forward() (全量 prefill 对照组)...")
             pred_tokens, fwd_logits = run_forward_baseline(model, tokenizer, input_ids, generated_ids, device)
 
-            if args.test_chunk_prefill:
-                print("\n[Step 2.5] 运行 chunk prefill forward 对照组...")
-                chunk_pred_tokens, chunk_logits = run_forward_with_forced_chunk_prefill(
-                    model,
-                    tokenizer,
-                    input_ids,
-                    generated_ids,
-                    device,
-                    args.chunk_prefill_threshold,
-                )
-                chunk_argmax_passed = compare_chunk_prefill_results(
-                    fwd_logits,
-                    chunk_logits,
-                    tokenizer,
-                    generated_ids,
-                )
-                chunk_token_passed = torch.equal(pred_tokens, chunk_pred_tokens)
-                if not chunk_token_passed:
-                    print("  ❌ Chunk prefill 返回的 pred_tokens 与 full forward 不一致。")
-                if not chunk_argmax_passed or not chunk_token_passed:
-                    all_passed = False
-
             # ---- Step 3: 对比 argmax ----
             print("\n[Step 3] 对比 generate vs forward argmax 结果...")
             argmax_passed = compare_results(generated_ids, pred_tokens, tokenizer, gen_scores=gen_scores, fwd_logits=fwd_logits)
@@ -966,14 +868,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--padding_side", choices=["left", "right"], default="left",
         help="batch_size > 1 时 tokenizer padding 方向；decoder-only generate 通常使用 left",
-    )
-    parser.add_argument(
-        "--test_chunk_prefill", action="store_true",
-        help="额外强制触发 chunk prefill，并与普通 full forward 的 generated-token logits 对比",
-    )
-    parser.add_argument(
-        "--chunk_prefill_threshold", type=int, default=1,
-        help="chunk prefill 测试使用的触发阈值；默认 1 表示当前测试序列会强制走 chunk prefill",
     )
     parser.add_argument(
         "--compare_batch_single", action="store_true",

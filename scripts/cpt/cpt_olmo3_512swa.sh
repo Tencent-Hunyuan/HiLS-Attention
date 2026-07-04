@@ -56,7 +56,7 @@ echo "Using MAX_STEPS=${MAX_STEPS} (TOKEN_CNT=${TOKEN_CNT}, GLOBAL_BATCH_SIZE=${
 MAX_PREFETCH_RETRIES=10
 for i in $(seq 1 $MAX_PREFETCH_RETRIES); do
     echo "[Prefetch] Attempt $i/$MAX_PREFETCH_RETRIES ..."
-    python code_exp/flash_hsa_run.py
+    python code_exp/qwen_hils_run.py
     if [ $? -eq 0 ]; then
         echo "[Prefetch] Success on attempt $i."
         break

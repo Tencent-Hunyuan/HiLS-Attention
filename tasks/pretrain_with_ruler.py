@@ -156,11 +156,6 @@ def apply_scheduled_hsa_topk(model, topk: int) -> int:
             continue
 
         layer_topk = int(topk)
-        hsa_visible_window = getattr(module, "hsa_visible_window", -1)
-        if hsa_visible_window != -1:
-            sliding_window = getattr(module, "sliding_window", 0) or 0
-            visible_tokens = max(0, int(hsa_visible_window) - int(sliding_window))
-            layer_topk = min(layer_topk, max(1, visible_tokens // int(module.chunk_size)))
 
         if int(getattr(module, "topk")) == layer_topk:
             continue
@@ -540,9 +535,9 @@ def main():
                     profiler.stop()
 
             # # ── Dynamic runtime config: hot-reload from {output_dir}/runtime_config.json ──
-            # # Supports changing save_steps, dropout, etc. without restarting training.
+            # # Supports changing save_steps, attention dropout, etc. without restarting training.
             # # Example runtime_config.json:
-            # #   {"save_steps": 250, "hsa_dropout_prob": 0.1, "hsa_disturb_prob": 0.1, "attention_dropout": 0.0}
+            # #   {"save_steps": 250, "attention_dropout": 0.0}
             # _runtime_cfg_path = os.path.join(args.train.output_dir, "runtime_config.json")
             # try:
             #     if os.path.isfile(_runtime_cfg_path):
@@ -557,7 +552,7 @@ def main():
             #                 args.train.save_steps = _new_ss
 
             #         # 2) model config fields (dropout, etc.) — propagate to all layers
-            #         _model_cfg_keys = ["hsa_dropout_prob", "hsa_disturb_prob", "attention_dropout"]
+            #         _model_cfg_keys = ["attention_dropout"]
             #         _unwrapped = model.module if hasattr(model, "module") else model
             #         for _key in _model_cfg_keys:
             #             if _key in _runtime_cfg:

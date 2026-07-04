@@ -178,12 +178,12 @@ def build_converted_sd(
     """Build converted state dict directly from source state dict.
 
     For non-HSA keys: normalize key prefix and copy tensor as-is.
-    For current LHSA layers:
+    For current HiLS layers:
       - hsa_denom == 1: copy base q/k/v/o_proj directly; names and shapes match.
-      - hsa_denom > 1: initialize the smaller q/k/v_proj from the base HSA head subset.
+      - hsa_denom > 1: initialize the smaller q/k/v_proj from the base HiLS head subset.
 
-    New LHSA-only parameters such as lmk_q_proj, lmk_q_norm, and learnable_lmk_bias
-    have no base-model source and are intentionally left randomly initialized.
+    New HiLS-only parameters such as lmk_q_proj and lmk_q_norm have no
+    base-model source and are intentionally left randomly initialized.
     """
     converted_sd: Dict[str, torch.Tensor] = {}
     lhsa_set = set(lhsa_indices)

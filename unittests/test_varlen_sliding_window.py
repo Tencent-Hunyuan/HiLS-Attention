@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from models.FlashHiLS.configuration_hsa import HSAConfig
+from models.FlashHiLS.configuration_hils import HSAConfig
 from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
 
 try:
@@ -42,8 +42,6 @@ def _build_model(device: str, dtype: torch.dtype, sliding_window: int) -> HiLSFo
         sliding_window=sliding_window,
         full_attn_interleave=0,
         attention_dropout=0.0,
-        hsa_disturb_prob=0.0,
-        hsa_dropout_prob=0.0,
         rms_norm_eps=1e-6,
         chunk_size=CHUNK_SIZE,
     )
@@ -68,8 +66,6 @@ def _build_hybrid_model(device: str, dtype: torch.dtype, sliding_window: int) ->
         sliding_window=sliding_window,
         full_attn_interleave=1, # 1 swa, 1 hsa
         attention_dropout=0.0,
-        hsa_disturb_prob=0.0,
-        hsa_dropout_prob=0.0,
         rms_norm_eps=1e-6,
         chunk_size=CHUNK_SIZE,
         hsa_topk=16,

@@ -7,7 +7,7 @@ GLOBAL_BATCH_SIZE=${GLOBAL_BATCH_SIZE:-128}
 MICRO_BATCH_SIZE=${MICRO_BATCH_SIZE:-8}
 TRAIN_SIZE=${TRAIN_SIZE:-500000000000}
 
-bash train_dist.sh tasks/pretrain_with_ruler.py configs/baselines/full_attn_tiny.yaml \
+bash train_dist.sh tasks/pretrain_with_ruler.py configs/training_recipes/pretrain_345M_8K_30B.yaml \
     --model.config_path $MODEL_CONFIG \
     --data.train_path $CORPUS_PATH \
     --data.max_seq_len $MAX_SEQ_LEN \

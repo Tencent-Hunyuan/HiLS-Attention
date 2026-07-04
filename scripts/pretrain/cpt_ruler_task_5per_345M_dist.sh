@@ -7,7 +7,7 @@ SAVE_STEPS=${SAVE_STEPS:-5000}
 GLOBAL_BATCH_SIZE=${GLOBAL_BATCH_SIZE:-128}
 MICRO_BATCH_SIZE=${MICRO_BATCH_SIZE:-16}
 TRAIN_SIZE=${TRAIN_SIZE:-10000000000}
-TRAINING_RECIPE=${TRAINING_RECIPE:-configs/baselines/full_attn_tiny_cos.yaml}
+TRAINING_RECIPE=${TRAINING_RECIPE:-configs/training_recipes/cpt_345M_256K_longmino.yaml}
 WANDB_PROJECT=${WANDB_PROJECT:-345M_long}
 
 bash train_dist.sh tasks/pretrain_with_ruler.py $TRAINING_RECIPE \

@@ -9,12 +9,12 @@ Reports results split by 'length' field: short / medium / long.
 
 Supports both:
   - Standard HF models (e.g. Olmo-3-7B-Instruct-SFT)
-  - HSA models with custom config (e.g. olmo3_lhsa_innerx)
+  - HSA models with custom config (e.g. olmo3_hils_innerx)
 
 Usage:
     python eval/eval_longbench2_direct.py \
         --checkpoint_path /path/to/hf_ckpt \
-        --config_path configs/olmo3_7B/olmo3_lhsa_innerx.json \
+        --config_path configs/olmo3_7B/olmo3_hils_innerx.json \
         --vocab_dir ./configs/olmo3_vocab/ \
         --segment_size 4096 \
         --save_dir results/longbench2_direct
@@ -61,20 +61,20 @@ def resolve_hsa_class(config_path=None, checkpoint_path=None):
             model_type = json.load(f).get("model_type", "")
     if "olmo" in model_type:
         from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
-        print("Using OLMo LHSA implementation")
+        print("Using OLMo HiLS implementation")
     else:
         from models.FlashHiLS.modeling_qwen_hils import HiLSForCausalLM
-        print("Using Qwen LHSA implementation")
+        print("Using Qwen HiLS implementation")
     return HiLSForCausalLM
 
 
 def _need_hsa(config_path=None, checkpoint_path=None):
-    """Check if the model is an HSA model (has flash_hsa / olmo_lhsa model_type)."""
+    """Check if the model is an HSA model (has qwen_hils / olmo_hils model_type)."""
     path = config_path or (os.path.join(checkpoint_path, "config.json") if checkpoint_path else None)
     if path and os.path.exists(path):
         with open(path, 'r') as f:
             mt = json.load(f).get("model_type", "")
-        return "hsa" in mt or "lhsa" in mt
+        return "hsa" in mt or "hils" in mt
     return False
 
 
@@ -87,9 +87,9 @@ def load_model(args, device):
     use_hsa = _need_hsa(args.config_path, args.checkpoint_path)
 
     if use_hsa:
-        from models.FlashHiLS.configuration_hsa import HSAConfig
+        from models.FlashHiLS.configuration_hils import HSAConfig
         HiLSForCausalLM = resolve_hsa_class(args.config_path, args.checkpoint_path)
-        AutoConfig.register("olmo_lhsa", HSAConfig)
+        AutoConfig.register("olmo_hils", HSAConfig)
         HiLSForCausalLM.config_class = HSAConfig
         AutoModelForCausalLM.register(HSAConfig, HiLSForCausalLM)
 

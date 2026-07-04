@@ -2,7 +2,7 @@ import json
 import os
 import sys
 from transformers import AutoConfig, AutoModelForCausalLM, Qwen3Config
-from models.FlashHiLS.configuration_hsa import HSAConfig
+from models.FlashHiLS.configuration_hils import HSAConfig
 def _pop_cli_arg(name: str):
     if name not in sys.argv:
         return None
@@ -34,7 +34,7 @@ def _resolve_model_type(config_path=None, checkpoint_path=None):
 
 def resolve_hsa_class(config_path=None, checkpoint_path=None):
     model_type = _resolve_model_type(config_path, checkpoint_path)
-    if "lhsa" in model_type or "hsa" in model_type:
+    if "hils" in model_type or "hsa" in model_type:
         if "olmo" in model_type:
             from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
             return HiLSForCausalLM, model_type
@@ -42,9 +42,9 @@ def resolve_hsa_class(config_path=None, checkpoint_path=None):
             from models.FlashHiLS.modeling_qwen_hils import HiLSForCausalLM
             return HiLSForCausalLM, model_type
         # Generic HSA fallback (legacy): qwen-based HiLSForCausalLM under the
-        # literal "flash_hsa" tag.
+        # literal "qwen_hils" tag.
         from models.FlashHiLS.modeling_qwen_hils import HiLSForCausalLM
-        return HiLSForCausalLM, model_type or "flash_hsa"
+        return HiLSForCausalLM, model_type or "qwen_hils"
     # Non-HSA checkpoint (e.g. stock Olmo3 "olmo3", plain Qwen, etc.).
     # Transformers' builtin AutoModel classes handle it; no HSA registration
     # needed. Return None to signal "skip HSA registration".
