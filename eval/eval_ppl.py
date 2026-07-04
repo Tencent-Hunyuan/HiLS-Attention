@@ -163,10 +163,9 @@ def get_model_input_device(model):
 
 
 class KahanSum:
-    """Kahan 求和算法，减少浮点累加误差"""
     def __init__(self):
         self.sum = 0.0
-        self.c = 0.0  # 误差补偿
+        self.c = 0.0
 
     def add(self, value):
         y = value - self.c

@@ -17,14 +17,12 @@ import argparse
 import torch
 import torch.nn.functional as F
 
-# 将项目根目录加入 sys.path，以便导入 models 和 utils
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-# 注册自定义模型到 transformers
 from models.FlashHiLS.configuration_hils import HSAConfig
 from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
 
@@ -54,11 +52,8 @@ def compute_ppl_from_logits(logits, target_ids):
         ppl: 困惑度
         avg_nll: 平均负对数似然
     """
-    # 计算交叉熵（逐 token）
     log_probs = F.log_softmax(logits.float(), dim=-1)  # [gen_len, vocab_size]
-    # 取每个位置对应 target token 的 log probability
     target_log_probs = log_probs.gather(dim=-1, index=target_ids.unsqueeze(-1)).squeeze(-1)  # [gen_len]
-    # 平均负对数似然
     avg_nll = -target_log_probs.mean().item()
     ppl = math.exp(avg_nll)
     return ppl, avg_nll
@@ -79,13 +74,11 @@ def run_generate(model, tokenizer, prompt, device, max_new_tokens):
             input_ids,
             max_new_tokens=max_new_tokens,
             do_sample=False,  # greedy decode
-            output_scores=True,  # 返回每步的 logits
+            output_scores=True,
             return_dict_in_generate=True,
         )
 
-    generated_ids = output.sequences[0, input_len:]  # 只取新生成的部分
-    # output.scores 是一个 tuple，每个元素是 [batch_size, vocab_size] 的 logits
-    # 拼接成 [gen_len, vocab_size]
+    generated_ids = output.sequences[0, input_len:]
     gen_scores = torch.stack(output.scores, dim=0).squeeze(1)  # [gen_len, vocab_size]
     return input_ids, generated_ids, gen_scores
 
@@ -196,7 +189,6 @@ def run_generate_batch(model, tokenizer, prompts, device, max_new_tokens, paddin
 
 
 def run_forward_baseline_plain(model, input_ids, generated_ids, device):
-    """无 LMK 的全量 prefill 对照：prompt + generated 一次 forward。"""
     prompt_len = input_ids.shape[1]
     gen_len = generated_ids.shape[0]
     full_ids = torch.cat([input_ids, generated_ids.unsqueeze(0)], dim=1)
@@ -258,11 +250,6 @@ def run_forward_baseline_plain_batch(model, input_ids, attention_mask, generated
 
 
 def run_forward_baseline(model, tokenizer, input_ids, generated_ids, device):
-    """
-    全量 forward 对照组：
-    - insert_landmarks=True: 外部 insert LMK，再 forward（与 eval_ppl_hf 一致）
-    - insert_landmarks=False: 直接 forward 原始 token 序列（param_reuse / base OLMo）
-    """
     if not model.insert_landmarks:
         return run_forward_baseline_plain(model, input_ids, generated_ids, device)
 
@@ -271,21 +258,15 @@ def run_forward_baseline(model, tokenizer, input_ids, generated_ids, device):
     prompt_len = input_ids.shape[1]
     gen_len = generated_ids.shape[0]
 
-    # 1. 拼接完整序列：prompt + generated
     full_ids = torch.cat([input_ids, generated_ids.unsqueeze(0)], dim=1)  # [1, prompt_len + gen_len]
     full_len = full_ids.shape[1]
     print(f"  [Forward] 原始序列长度: {full_len} (prompt={prompt_len}, gen={gen_len})")
 
-    # 2. 外部插入 LMK token（和 eval_ppl_hf.py 一致）
     full_ids_with_lmk = insert_special_tokens(full_ids, lmk_id, chunk_size)
     position_ids = create_position_ids_with_landmarks(None, full_len, chunk_size, device)
     new_seq_len = full_ids_with_lmk.shape[1]
     print(f"  [Forward] 插入 LMK 后序列长度: {new_seq_len}")
 
-    # 3. 构建 LMK 位置的 mask（用于后续剔除 logits）
-    #    insert_special_tokens 在每 (chunk_size-1) 个 real token 后插入一个 LMK
-    #    LMK 位于 index % chunk_size == chunk_size - 1 的位置
-    #    最后不完整 chunk 没有 LMK（remainder < chunk_size，不会触发该条件）
     pos_indices = torch.arange(new_seq_len, device=device)
     is_lmk = (pos_indices % chunk_size == chunk_size - 1)
     non_lmk_mask = ~is_lmk
@@ -294,7 +275,6 @@ def run_forward_baseline(model, tokenizer, input_ids, generated_ids, device):
     print(f"  [Forward] LMK 数量: {num_lmk}, 非 LMK 数量: {num_non_lmk}")
     assert num_non_lmk == full_len, f"非 LMK 数量 {num_non_lmk} != 原始序列长度 {full_len}"
 
-    # 4. 关闭 auto_insert_lmk 和 _gen_state.active，防止模型内部重复处理
     saved_auto_insert_lmk = model.auto_insert_lmk
     saved_gen_state_active = model._gen_state.active
     saved_lmk_positions = model._gen_state.lmk_positions_in_input
@@ -302,7 +282,6 @@ def run_forward_baseline(model, tokenizer, input_ids, generated_ids, device):
     model._gen_state.active = False
     model._gen_state.lmk_positions_in_input = None
 
-    # 使用 use_cache=True，和 eval_ppl_hf.py 保持一致
     with torch.no_grad():
         outputs = model(
             input_ids=full_ids_with_lmk,
@@ -311,22 +290,17 @@ def run_forward_baseline(model, tokenizer, input_ids, generated_ids, device):
             attention_mask=None,
         )
 
-    # 恢复状态
     model.auto_insert_lmk = saved_auto_insert_lmk
     model._gen_state.active = saved_gen_state_active
     model._gen_state.lmk_positions_in_input = saved_lmk_positions
 
-    # 5. 从 logits 中外部剔除 LMK 位置（和 eval_ppl_hf.py 中处理 label 的方式对应）
     logits = outputs.logits  # [1, new_seq_len, vocab_size]
     logits_no_lmk = logits[:, non_lmk_mask, :]  # [1, full_len, vocab_size]
     print(f"  [Forward] 剔除 LMK 后 logits 形状: {logits_no_lmk.shape}")
 
-    # 6. Causal LM shift: logits[i] 预测 token[i+1]
-    #    要预测 generated tokens，需要取 logits[prompt_len-1 : prompt_len+gen_len-1]
     pred_logits = logits_no_lmk[:, prompt_len - 1 : prompt_len + gen_len - 1, :]  # [1, gen_len, vocab_size]
     pred_tokens = pred_logits.argmax(dim=-1).squeeze(0)  # [gen_len]
 
-    # 同时返回 pred_logits 用于计算 PPL
     return pred_tokens, pred_logits.squeeze(0)  # pred_logits: [gen_len, vocab_size]
 
 
@@ -394,7 +368,6 @@ def compare_results(
             pred_text = tokenizer.decode([pred_tok])
             print(f"    位置 {idx}: generate={gen_tok}('{gen_text}') vs forward={pred_tok}('{pred_text}')")
 
-            # 打印 top1/top2 logits 分析是否因为 logits 接近导致 argmax 随机性
             if gen_scores is not None:
                 g_logits = gen_scores[idx]  # [vocab_size]
                 g_top2_vals, g_top2_ids = g_logits.topk(2)
@@ -413,11 +386,8 @@ def compare_results(
                 print(f"      [Forward  logits] top1={f_top2_ids[0].item()}('{f_top1_text}') logit={f_top2_vals[0].item():.4f}, "
                       f"top2={f_top2_ids[1].item()}('{f_top2_text}') logit={f_top2_vals[1].item():.4f}, diff={f_diff:.6f}")
 
-            # 如果两侧都有 logits，额外打印对方 top1 token 在自己侧的 logit 值
             if gen_scores is not None and fwd_logits is not None:
-                # generate 侧：forward 的 top1 token 在 generate logits 中的值
                 g_logit_for_fwd_top1 = gen_scores[idx][pred_tok].item()
-                # forward 侧：generate 的 top1 token 在 forward logits 中的值
                 f_logit_for_gen_top1 = fwd_logits[idx][gen_tok].item()
                 print(f"      [交叉对比] gen侧对fwd_top1('{pred_text}')的logit={g_logit_for_fwd_top1:.4f}, "
                       f"fwd侧对gen_top1('{gen_text}')的logit={f_logit_for_gen_top1:.4f}")
@@ -442,7 +412,6 @@ def compare_ppl(gen_ppl, gen_nll, fwd_ppl, fwd_nll, nll_tolerance):
     
     ppl_diff = abs(gen_ppl - fwd_ppl)
     nll_diff = abs(gen_nll - fwd_nll)
-    # 使用相对误差判断，因为 bf16 精度下可能有微小差异
     rel_diff = ppl_diff / max(gen_ppl, fwd_ppl, 1e-8)
     
     print(f"    PPL 绝对差: {ppl_diff:.6f}, 相对差: {rel_diff:.6f}")
@@ -707,7 +676,6 @@ def main(args):
     device = torch.device(args.device)
     print(f"[INFO] 使用设备: {device}")
 
-    # ---- 加载 tokenizer ----
     tokenizer_path = args.tokenizer_path or args.checkpoint_path
     assert tokenizer_path, "请提供 --tokenizer_path 或 --checkpoint_path（用于加载 tokenizer）"
 
@@ -716,10 +684,6 @@ def main(args):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # ---- 加载模型 ----
-    # 1) 仅 checkpoint：from_pretrained，config 来自 ckpt 目录
-    # 2) 仅 config_path：from_config 随机初始化（同 eval/eval_ppl_hf.py）
-    # 3) config_path + checkpoint：用 config_path 构图，权重从 checkpoint 加载（HF: from_pretrained(ckpt, config=...)）
     model_kwargs = {
         "torch_dtype": torch.bfloat16,
     }
@@ -754,7 +718,6 @@ def main(args):
     print(f"[INFO] auto_insert_lmk={model.auto_insert_lmk}")
     print(f"[INFO] 模型参数量: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")
 
-    # ---- 准备测试 prompts ----
     prompts = args.prompts if args.prompts else [
         # "Once a year I make the drive back to my hometown of Shreveport, Louisiana. My journey begins as the sun rises over our nation’s capital. Before long I’m moving through smaller cities that claim tobacco and the Confederate flag as symbols of pride, wondering how long it will be before the smell of factory smoke is replaced by the fertile aroma of livestock and chicken flocks. Then the narrow roads begin to unwind--hugged on either side by pastures, cows, horses, and shacks--and so too does my mind. As I ramble down bumpy paths, I stumble over the memory of a day spent fishing in a nearby bayou with my uncles, and the familiar smells of rank armpits and beer overwhelm my senses. Later, I see shiny pumps and a black veil waiting on top of an aging quilt and hear children running in bare feet. A tin of peanut brittle spotted at the counter of a country gas station lands my mind on my great-grandmother because that was her favorite candy. Big Momma was part of a chorus of tabernacle women who mothered me. She always said Shreveport was known as the city of churches because they sprout up on corners like strawberries in July. Word has it that there are more churches in my hometown than in any other city in the country. Hymns flow from their doors on Sunday mornings, while during the week the smiling church ladies greet you with words of encouragement as they skirt around the vestibule like bees on a honeycomb. “Baaaby, that was a fine prayer you did Sunday,” Mrs. Davis would say as I walked by. “Whose girl is dat with you? Bring her next Sunday.” But as is the case with all of Louisiana, our little city wobbles between extremes. Our local dishes of gumbo, catfish, and dirty rice must be spicy hot. Juke joints squat next to churches, and betting slips compete with offering envelopes. Fire-and-brimstone ministers point out that we drink and gamble too much. That is, until one in their congregation “hits.” Then it’s time to bring a tithe of the winnings to the altar. All of this is summed up neatly by the two billboards I notice as I cross the Texas Street Bridge into my city’s fold. One beckons you toward the horseshoe casino straight ahead. Opposite, another shouts, wanna win the jackpot? come to jesus. There is always the question of which road to take. To enter Shreveport’s downtown, travelers must cross our beloved Red River, which curls like a large garden snake around the city. The river is yet another contradiction. It does not remotely resemble the liquid silver color of the Mississippi. Instead, it pours out a murky clay red and flows as thick as soft mud across Louisiana. The only time it sparkles is at night, when the casino riverboats’ carnival lights illuminate the city. Following the curve of the river, crouched along the road leaving downtown, rests a neighborhood of little shacks that belie a city of over a quarter million. We call the houses shotgun because a bullet fired through the front entrance will pass through every room in the house before exiting the back door. It is a place where the children play dodgeball in the street but know to watch their manners, and every woman worth her salt can make a meal out of meat drippings, flour, eggs, and rice. The unpaved streets are filled with stray dogs, and after a rain the air smells like wet earth. On warm mornings, plump older women wearing blinding white maid uniforms congregate on corners and talk while awaiting the arrival of little blue buses that will take them to the homes where they work. “Child, Pastor Green liked to got the church on fire Sunday, didn’t he?” “Yeah, girl, and did you hear Mrs. Rogers shouting in the back? You know that boy of hers keeps her on her knees. He ain’t got good sense.” “Folks say what they want about her whiskey habit. That woman will give you the shirt off her back. That’s how I know she close to God.” That neighborhood was called Stoner Hill. I grew up listening to the women there. Everyone in that phalanx had a family church, and most believed in God and agreed that it was through Jesus Christ that we all gained salvation. Growing up, I don’t recall ever meeting someone who didn’t have a faith--at least no one who would admit such a thing out loud. It was a place where all doctrine was respected; even door-knocking Jehovah’s Witnesses were given the opportunity to speak their piece. Yes, Shreveport was the kind of city where everyone had a church, temple, or chapel they considered theirs, even if they’d only seen it from the inside a dozen times. A child from Stoner Hill seldom made it out of puberty without a distant cousin or a neighbor dragging the youngster off to recite New Testament Scripture in the Easter pageant or sing carols in the Christmas program, blessing the child with at least a C.M.E. membership: attendance at Christmas, Mother’s Day, and Easter. I’ve been reciting Bible verses since I was old enough to say, “Jesus wept.” My great-grandmother, Big Momma, used to say about the Bible, “Baby, you can find a word to carry you through anythang.” Still, my very religious family managed to pick and choose which Scriptures to live by. The men would pray up a miracle in the deacons’ corner and then enjoy a strong glass or two of Jack Daniel’s after church. The women sang in the choir but cursed like sailors when their team fumbled on Monday Night Football. “I could pull up my skirt and beat that sorry-ass receiver to the ball,” Big Momma would shout from the kitchen while stacking freshly washed dishes in cabinets. I spent most of my childhood summers down the road from home at Big Momma’s house. We began each day with the morning ritual she referred to as her labor of love--combing my hair. I would sit on the porch floor with my feet swinging over its edge while my head bobbed back and forth between Big Momma’s legs as she tugged, parted, and braided my long, thick, nappy hair. Big Momma always sat perfectly upright, sucking in her breath with each drag of the comb, then releasing the air from her hollow Cherokee cheeks, never once bending her back. After she finished the job, she’d pat me on my head and say, “Now you beautiful.” I’d rush to the bathroom, stand on the toilet seat, and peer over the sink into the mirror, eager to view this new and beautiful me. Of course, she never materialized. All I ever saw was my chubby face with a crown of lopsided plaits and a mouth full of what my momma teasingly called “beaver teeth” because they looked large enough to saw wood. Besides our grooming, Big Momma and her band of swearing sopranos made sure their offspring got a proper Christian upbringing. Every Sunday there was morning church school and Baptist Training Union. And for one week every August the young ones were herded to Grambling, Louisiana, a small college town, for a gigantic statewide revival called Youth-En-Camp. Although the drive took only a few hours, it had the feel of a great adventure. This was due in part to the parcel of sheets, dresses, and fried chicken that always accompanied me but also because the decreased supervision allowed me to experience free will. It was during one of these revivals that I became hopeful that I would one day look into the mirror and see beauty in myself. I was thirteen at the time--too old to be in one of the crayon classrooms but still too awkward to be cool. Before that summer I’d never thought that I could be beautiful--perhaps cute, on a good day, but never glamorous, radiant, or enchanting. Of course, up to that point, the only form of beauty I knew to desire was physical splendor, in which category I was sorely lacking. I was the tallest girl in my eighth-grade class, and when I tried to walk in dress shoes, my heels would slide out, causing me to trip over myself. Naturally, my only concern was ridding myself of awkwardness. Beauty was something I saw only in others. A woman’s even-colored skin and bright white teeth made her beautiful, never the inner peace that sparkled in her eyes. I greatly admired the little girl’s sunny Easter dress, adorned with white bows and ribbons, but gave no thought to the mother--needle in one hand, iron in the other, creating this lovely vision. And Big Momma’s front lawn with its velvet violets, deep purple grape suckers, and yellow sunflowers floating in the air like balloons was beautiful, but never once did I consider the care they were given even as the flowers’ first petals danced indiscriminately in the sunlight. I had always focused on my plainness, and it was this sorry image of myself that I took with me to Youth-En-Camp that summer. Only later would I understand that real beauty emanates from the heart. At camp that summer, our daily activities started with 5 a.m. prayer and devotion, during which I often volunteered to pray out loud so that everyone could hear my conversation with God. Somewhere along the way I got the notion that you were the biggest coward and hypocrite if you didn’t want to pray out loud. That to me suggested you were ashamed of the Lord, and even with all my insecurities and teenage angst, I wanted to be bigger than that. After breakfast, there was Bible-study class, lunch, and midday worship. There teenagers would offer testimonials, and thanks to those I referred to as our “holy staples” (they seemed as necessary to our religious experience as the flour and canned goods that lined the shelves of our neighborhood general store)--the girl who’d been suffering from multiple sclerosis who was walking for the first time in five years and the boys who overnight had been called to preach--the standard for godliness was set high. Following dinner and church service came the dating game, which commenced on a dusty bridge that stretched a half mile long and linked Grambling to the town of Ruston. As a symbolic gesture, the bridge was closed while the campers lined up at its foot, over a thousand of us girls on the right while the boys, far fewer in number, stood on the left. Once we "
             # "The capital of France is "
@@ -793,22 +756,16 @@ It would """
             print(f"  生成 token 数: {generated_ids.shape[0]}")
             print(f"  生成文本: {gen_text}")
 
-            # 重置 generate 模式状态
             model._gen_state.reset()
 
-            # ---- Step 2: Forward baseline (全量 prefill) ----
             print("\n[Step 2] 运行 model.forward() (全量 prefill 对照组)...")
             pred_tokens, fwd_logits = run_forward_baseline(model, tokenizer, input_ids, generated_ids, device)
 
-            # ---- Step 3: 对比 argmax ----
             print("\n[Step 3] 对比 generate vs forward argmax 结果...")
             argmax_passed = compare_results(generated_ids, pred_tokens, tokenizer, gen_scores=gen_scores, fwd_logits=fwd_logits)
 
-            # ---- Step 4: 对比 PPL ----
             print("\n[Step 4] 对比 generate vs forward PPL...")
-            # Generate 侧 PPL：用 generate 每步的 scores 和实际生成的 token 计算
             gen_ppl, gen_nll = compute_ppl_from_logits(gen_scores, generated_ids)
-            # Forward 侧 PPL：用全量 forward 的 logits 和实际生成的 token 计算
             fwd_ppl, fwd_nll = compute_ppl_from_logits(fwd_logits, generated_ids)
             ppl_passed = compare_ppl(gen_ppl, gen_nll, fwd_ppl, fwd_nll, args.nll_tolerance)
 

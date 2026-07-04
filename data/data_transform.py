@@ -396,14 +396,11 @@ class RulerSynthesizer:
                 _, q, a = self.generate_multi_query(ids, **self.kwargs)
             elif self.task_id == 2:
                 _, q, a = self.generate_variable_tracking(ids, **self.kwargs)
-                # 查找分隔符位置，token ID 13 通常是换行符
-                # 但不同 tokenizer 可能不同，需要容错处理
                 sep_indices = np.argwhere(a == 13).flatten()
                 if len(sep_indices) > 0:
                     last_idx = sep_indices[-1]
                     q = np.concatenate([q, a[:last_idx + 1]])
                     a = a[last_idx + 1:]
-                # 如果没有找到 token 13，尝试查找其他可能的分隔符（如冒号 58）
                 else:
                     pass
 

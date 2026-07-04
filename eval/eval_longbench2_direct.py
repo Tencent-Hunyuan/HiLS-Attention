@@ -53,7 +53,6 @@ set_seed(42)
 #  Model loading (aligned with eval_ruler_hf.py / eval_longbench2_hf.py)
 # ============================================================
 def resolve_hsa_class(config_path=None, checkpoint_path=None):
-    """根据 config 中的 model_type 动态选择 HiLSForCausalLM 实现"""
     model_type = ""
     path = config_path or (os.path.join(checkpoint_path, "config.json") if checkpoint_path else None)
     if path and os.path.exists(path):
@@ -83,47 +82,7 @@ def load_model(args, device):
     Unified model loading:
       - If config_path points to an HSA config → register HSA class, load with config override
       - Otherwise → standard AutoModelForCausalLM.from_pretrained
-    """
-    use_hsa = _need_hsa(args.config_path, args.checkpoint_path)
-
-    if use_hsa:
-        from models.FlashHiLS.configuration_hils import HSAConfig
-        HiLSForCausalLM = resolve_hsa_class(args.config_path, args.checkpoint_path)
-        AutoConfig.register("olmo_hils", HSAConfig)
-        HiLSForCausalLM.config_class = HSAConfig
-        AutoModelForCausalLM.register(HSAConfig, HiLSForCausalLM)
-
-    model_kwargs = {
-        'torch_dtype': torch.bfloat16,
-        'attn_implementation': 'flash_attention_3' if use_hsa else 'flash_attention_2',
-        'device_map': device,
-    }
-
-    if args.checkpoint_path:
-        if args.config_path:
-            config = AutoConfig.from_pretrained(args.config_path)
-            model = AutoModelForCausalLM.from_pretrained(
-                args.checkpoint_path, config=config, **model_kwargs
-            )
-        else:
-            model = AutoModelForCausalLM.from_pretrained(
-                args.checkpoint_path, **model_kwargs
-            )
-    else:
-        assert args.config_path is not None, "必须提供 --config_path 或 --checkpoint_path"
-        config = AutoConfig.from_pretrained(args.config_path)
-        model = AutoModelForCausalLM.from_config(config, **model_kwargs).to(device)
-
-    model.eval()
-    return model
-
-
-# ============================================================
-#  Prompt template
-# ============================================================
-SYSTEM_PROMPT = "You are a helpful assistant. Read the following document and question carefully, then answer with only the letter (A, B, C, or D) of the correct option. Do not output anything else."
-
-USER_TEMPLATE = """\
+\
 Document:
 {context}
 

@@ -4,7 +4,6 @@
 # from typing import Tuple
 
 
-# # 标准 HuggingFace RoPE 实现
 # def apply_rotary_pos_emb(
 #     q: torch.Tensor,
 #     k: torch.Tensor,
@@ -12,7 +11,6 @@
 #     sin: torch.Tensor,
 #     unsqueeze_dim: int = 1
 # ) -> Tuple[torch.Tensor, torch.Tensor]:
-#     """标准 HuggingFace 风格的 RoPE 实现"""
 #     cos = cos.unsqueeze(unsqueeze_dim)
 #     sin = sin.unsqueeze(unsqueeze_dim)
     
@@ -37,7 +35,6 @@
 #         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
 #     def _generate_inputs(self):
-#         """生成测试输入"""
 #         # shape: (batch, num_heads, seq_len, head_dim)
 #         query_states = torch.randn(
 #             self.batch_size, self.seq_len, self.num_heads, self.head_dim,
@@ -55,7 +52,6 @@
 #         return query_states, key_states, cos, sin
     
 #     def test_rope_vs_liger_rope(self):
-#         """测试标准 RoPE 和 Liger RoPE 的一致性"""
 #         try:
 #             from liger_kernel.transformers.rope import liger_rotary_pos_emb
 #         except ImportError:
@@ -63,37 +59,30 @@
         
 #         query_states, key_states, cos, sin = self._generate_inputs()
         
-#         # 克隆输入（因为 liger 可能是 in-place 操作）
 #         q_standard = query_states.clone()
 #         k_standard = key_states.clone()
 #         q_liger = query_states.clone()
 #         k_liger = key_states.clone()
         
-#         # 标准实现
 #         q_out_standard, k_out_standard = apply_rotary_pos_emb(
 #             q_standard, k_standard, cos, sin
 #         )
         
-#         # Liger 实现
 #         q_out_liger, k_out_liger = liger_rotary_pos_emb(
 #             q_liger, k_liger, cos, sin
 #         )
         
-#         # 验证一致性
 #         self.assertTrue(
 #             torch.allclose(q_out_standard, q_out_liger, rtol=1e-4, atol=1e-4),
-#             f"Query 不一致! Max diff: {(q_out_standard - q_out_liger).abs().max()}"
 #         )
 #         self.assertTrue(
 #             torch.allclose(k_out_standard, k_out_liger, rtol=1e-4, atol=1e-4),
-#             f"Key 不一致! Max diff: {(k_out_standard - k_out_liger).abs().max()}"
 #         )
         
 #         print(f"✓ Query max diff: {(q_out_standard - q_out_liger).abs().max():.2e}")
 #         print(f"✓ Key max diff: {(k_out_standard - k_out_liger).abs().max():.2e}")
 
 #     def test_rope_vs_liger_rope_half_precision(self):
-#         """测试半精度下的一致性 (bfloat16/float16)"""
 #         try:
 #             from liger_kernel.transformers.rope import liger_rotary_pos_emb
 #         except ImportError:
@@ -121,17 +110,14 @@
 #                     q_liger, k_liger, cos, sin
 #                 )
                 
-#                 # 半精度允许更大的容差
 #                 rtol, atol = (1e-2, 1e-2) if dtype == torch.float16 else (1e-2, 1e-2)
                 
 #                 self.assertTrue(
 #                     torch.allclose(q_out_standard, q_out_liger, rtol=rtol, atol=atol),
-#                     f"Query ({dtype}) 不一致! Max diff: {(q_out_standard - q_out_liger).abs().max()}"
 #                 )
 #                 print(f"✓ {dtype} Query max diff: {(q_out_standard - q_out_liger).abs().max():.2e}")
 
     # def test_rope_gradient_consistency(self):
-    #     """测试反向传播梯度的一致性"""
     #     try:
     #         from liger_kernel.transformers.rope import liger_rotary_pos_emb
     #     except ImportError:
@@ -139,7 +125,6 @@
         
     #     query_states, key_states, cos, sin = self._generate_inputs()
         
-    #     # 需要梯度
     #     q_standard = query_states.clone().requires_grad_(True)
     #     k_standard = key_states.clone().requires_grad_(True)
     #     q_liger = query_states.clone().requires_grad_(True)
@@ -159,14 +144,11 @@
     #     (q_out_standard + k_out_standard).sum().backward()
     #     (q_out_liger + k_out_liger).sum().backward()
         
-    #     # 验证梯度一致性
     #     self.assertTrue(
     #         torch.allclose(q_standard.grad, q_liger.grad, rtol=1e-4, atol=1e-4),
-    #         f"Query 梯度不一致! Max diff: {(q_standard.grad - q_liger.grad).abs().max()}"
     #     )
     #     self.assertTrue(
     #         torch.allclose(k_standard.grad, k_liger.grad, rtol=1e-4, atol=1e-4),
-    #         f"Key 梯度不一致! Max diff: {(k_standard.grad - k_liger.grad).abs().max()}"
     #     )
         
     #     print(f"✓ Query grad max diff: {(q_standard.grad - q_liger.grad).abs().max():.2e}")

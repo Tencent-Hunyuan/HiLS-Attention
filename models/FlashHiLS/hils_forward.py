@@ -324,7 +324,7 @@ def hils_causal_lm_forward(
     output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
     output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
 
-    non_lmk_mask = None  # 仅在 auto_insert_lmk 非 generate 模式下被赋值
+    non_lmk_mask = None
     if self.training and self.insert_landmarks:
         if self.adjust_lmk_pos:
             position_ids = create_position_ids_with_landmarks(position_ids, input_ids.shape[1], self.chunk_size, input_ids.device)
@@ -361,7 +361,6 @@ def hils_causal_lm_forward(
     )
 
     hidden_states = outputs.last_hidden_state
-    # 统一的 LMK 过滤：generate decode 边界步 + auto_insert_lmk 非 generate 模式
     hidden_states = self._filter_lmk_hidden_states(hidden_states, non_lmk_mask)
 
     slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep

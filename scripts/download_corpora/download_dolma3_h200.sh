@@ -1,5 +1,4 @@
 #!/bin/bash
-# 下载 allenai/dolma3_dolmino_mix-100B-1125 数据集
 
 SAVE_DIR=${1:-"/data/dolma3_dolmino_mix-100B-1125"}
 REPO="allenai/dolma3_dolmino_mix-100B-1125"

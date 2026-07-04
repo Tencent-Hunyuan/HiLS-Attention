@@ -1,10 +1,3 @@
-"""
-统计 LongBench v1 各 dataset 的 length 字段分布
-
-Usage:
-    python eval/stat_longbench_v1_length.py
-"""
-
 import numpy as np
 from datasets import load_dataset
 
@@ -66,7 +59,6 @@ def main():
     a = np.array(all_lengths)
     print(f"{'TOTAL':<25} {len(a):>5} {fmt(a.min()):>7} {fmt(a.mean()):>7} {fmt(np.median(a)):>7} {fmt(np.percentile(a,90)):>7} {fmt(np.percentile(a,95)):>7} {fmt(a.max()):>7}")
 
-    # 长度分布直方图
     print(f"\nLength Distribution (token count):")
     bins = [0, 2000, 4000, 8000, 16000, 32000, 64000, 128000, 999999]
     labels = ["0-2k", "2k-4k", "4k-8k", "8k-16k", "16k-32k", "32k-64k", "64k-128k", "128k+"]
@@ -75,7 +67,6 @@ def main():
         bar = "█" * (count // 20)
         print(f"  {label:<10} {count:>5}  {bar}")
 
-    # 按类别分长度段统计
     print(f"\nLength Distribution by Category:")
     print(f"{'Category':<25} " + " ".join(f"{l:>8}" for l in labels))
     print("=" * (25 + 9 * len(labels)))
@@ -90,7 +81,6 @@ def main():
     row = " ".join(f"{c:>8}" for c in cnts)
     print(f"{'TOTAL':<25} {row}")
 
-    # Code 类别按 dataset 细分长度段
     print(f"\nCode Category - Length Distribution by Dataset:")
     print(f"{'Dataset':<25} " + " ".join(f"{l:>8}" for l in labels))
     print("=" * (25 + 9 * len(labels)))

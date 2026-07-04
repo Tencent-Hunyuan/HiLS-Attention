@@ -49,7 +49,6 @@ set_seed(42)
 #  Model loading (aligned with eval_ruler_hf.py)
 # ============================================================
 def resolve_hsa_class(config_path=None, checkpoint_path=None):
-    """根据 config 中的 model_type 动态选择 HiLSForCausalLM 实现"""
     model_type = ""
     path = config_path or (os.path.join(checkpoint_path, "config.json") if checkpoint_path else None)
     if path and os.path.exists(path):
@@ -65,12 +64,6 @@ def resolve_hsa_class(config_path=None, checkpoint_path=None):
 
 
 def load_model(args, device):
-    """
-    统一的模型加载逻辑 (与 eval_ruler_hf.py 对齐):
-      1. resolve_hsa_class 根据 config 自动选 olmo / qwen
-      2. 如果同时有 config_path 和 checkpoint_path，用 config_path 覆盖 ckpt 自带的 config
-      3. 如果只有 config_path，从 config 初始化随机权重 (debug 用)
-    """
     HiLSForCausalLM = resolve_hsa_class(args.config_path, args.checkpoint_path)
     AutoConfig.register("olmo_hils", HSAConfig)
     HiLSForCausalLM.config_class = HSAConfig
@@ -122,9 +115,6 @@ $Q$
 # ============================================================
 def evaluate_cloze_fwd(model, tokenizer, prompt, options,
                        max_input_tokens=65000, rank=0, pad_to_multiple=1):
-    """
-    对每个 option 做一次 forward，用 avg log-prob 打分，选 PPL 最低的选项。
-    """
     device = torch.device(f"cuda:{rank}")
     option_scores = []
 
@@ -204,10 +194,6 @@ class ForceOptionLogitsProcessor(torch.nn.Module):
 
 def evaluate_cloze_generative(model, tokenizer, prompt, options,
                               max_input_tokens=65000, rank=0):
-    """
-    用 model.generate() + ForceOptionLogitsProcessor 强制生成每个选项，
-    收集 logits 并用 avg log-prob 打分。
-    """
     inputs = tokenizer(prompt, return_tensors="pt")
     input_ids = inputs["input_ids"]
     seq_length = input_ids.shape[1]
@@ -260,7 +246,6 @@ def evaluate_cloze_generative(model, tokenizer, prompt, options,
 #  Per-GPU worker
 # ============================================================
 def get_pred(data, args, out_path, rank, pad_to_multiple=1):
-    """每个 GPU 上的 worker：加载模型 → 逐条评测 → 写结果"""
     device = torch.device(f'cuda:{rank}')
     model = load_model(args, device)
     tokenizer = AutoTokenizer.from_pretrained(args.vocab_dir, trust_remote_code=True)
@@ -293,7 +278,6 @@ def get_pred(data, args, out_path, rank, pad_to_multiple=1):
             item['judge'] = (pred == item['answer'])
             print(f"pred: {pred}, answer: {item['answer']}")
 
-            # 截断 context 以节省磁盘
             item['context'] = context[:1000]
             fout.write(json.dumps(item, ensure_ascii=False) + '\n')
             fout.flush()
@@ -321,7 +305,6 @@ def main(args):
 
     out_file = os.path.join(args.save_dir, "cloze_result.jsonl")
 
-    # 加载数据
     if args.local_dataset is None:
         dataset = load_dataset('THUDM/LongBench-v2', split='train')
     else:
@@ -335,7 +318,6 @@ def main(args):
     data_all = [{k: item[k] for k in fields} for item in dataset]
     print(f"total data: {len(data_all)}")
 
-    # 断点续评
     has_data = {}
     if os.path.exists(out_file):
         with open(out_file, encoding='utf-8') as f:
@@ -363,7 +345,6 @@ def main(args):
         for p in processes:
             p.join()
 
-    # 汇总结果
     if os.path.exists(out_file):
         correct = 0
         total = 0

@@ -6,7 +6,6 @@ from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
 
 
 def _pop_cli_arg(name: str):
-    """从 sys.argv 中提取并移除指定参数及其值，避免传递给 opencompass argparse。"""
     if name not in sys.argv:
         return None
     i = sys.argv.index(name)
@@ -17,7 +16,6 @@ def _pop_cli_arg(name: str):
     return value
 
 
-# 剥离 --hsa-config 参数（shell 脚本会传入，但 opencompass 不识别）
 _pop_cli_arg("--hsa-config")
 
 HSAConfig.model_type = "olmo_hils"

@@ -36,7 +36,6 @@ from veomni.utils.import_utils import (
 )
 from veomni.models.module_utils import GradientCheckpointingLayer
 
-# NSA相关导入
 from native_sparse_attention.ops.parallel import parallel_nsa
 from fla.ops.utils import mean_pooling
 from fla.modules import RotaryEmbedding 
@@ -188,7 +187,6 @@ class Qwen3Attention(nn.Module):
             self.sliding_window = None
         
 
-        # # Debug: 打印Qwen3Attention层的所有关键参数
         # print(
         #     f"[Qwen3Attention Layer {layer_idx}] mode={mode}, Initialized with:\n"
         #     f"  hidden_size={config.hidden_size}, num_heads={config.num_attention_heads}, num_kv_heads={config.num_key_value_heads}\n"
@@ -269,7 +267,7 @@ class NativeSparseAttention(nn.Module):
         rope_theta: Optional[float] = 10000.,
         max_position_embeddings: Optional[int] = None,
         layer_idx: int = None,
-        use_rope: bool = True  # 新增参数：是否使用RoPE
+        use_rope: bool = True
     ):
         super().__init__()
 
@@ -331,7 +329,6 @@ class NativeSparseAttention(nn.Module):
         # this layer via ``position_embeddings``. See ``forward`` below.
         self.rotary = None
 
-        # # Debug: 打印NSA层的所有关键参数
         # print(
         #     f"[NSA Layer {layer_idx}] Initialized with:\n"
         #     f"  hidden_size={self.hidden_size}, num_heads={self.num_heads}, num_kv_heads={self.num_kv_heads}\n"
@@ -462,7 +459,6 @@ class Qwen3DecoderLayer(GradientCheckpointingLayer):
         super().__init__()
         self.hidden_size = config.hidden_size
         
-        # 根据mode选择不同的注意力层
         if mode == 'nsa':
             # self.self_attn = NativeSparseAttention(config=config, layer_idx=layer_idx)
             self.self_attn = NativeSparseAttention(
@@ -516,18 +512,16 @@ class Qwen3DecoderLayer(GradientCheckpointingLayer):
         #     **kwargs,
         # )
         if isinstance(self.self_attn, NativeSparseAttention):
-            # NSA层：使用不同的参数和返回值
             hidden_states, self_attn_weights, _ = self.self_attn(
                 hidden_states=hidden_states,
                 attention_mask=attention_mask,
-                past_key_values=past_key_value,  # 注意参数名不同
+                past_key_values=past_key_value,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 position_embeddings=position_embeddings,
                 **kwargs,
             )
         else:
-            # SWA层：保持原样
             hidden_states, self_attn_weights = self.self_attn(
                 hidden_states=hidden_states,
                 attention_mask=attention_mask,
@@ -685,13 +679,8 @@ class SWANNSAModel(Qwen3PreTrainedModel):
         self.full_attn_interleave = config.full_attn_interleave
         
         def layer_type(layer_idx: int) -> Literal['swa', 'nsa']:
-            """
-            确定每层的注意力类型：
-            - 每full_attn_interleave层使用NSA（替代原来的full-attn）
-            - 其余层使用SWA
-            """
             if self.full_attn_interleave > 0 and (layer_idx % self.full_attn_interleave == self.full_attn_interleave - 1):
-                return 'nsa'  # 原来是full-attn，现在替换为nsa
+                return 'nsa'
             else:
                 return 'swa'
         

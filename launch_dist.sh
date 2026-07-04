@@ -1,37 +1,15 @@
 #!/bin/bash
-# 分布式训练一键启动脚本，只需在 rank-0 节点上运行一次。
 #
-# 原理:
-#   TaiJi 多机任务中，各节点容器之间无法直接 SSH（端口 22 不通），
-#   但通过 TaiJi 管理端口（36000）可以用密码登录。
-#   本脚本利用 expect 自动输入密码，SSH 到各 worker 节点，
-#   以 nohup 后台启动训练进程，并传入正确的 INDEX（节点 rank）和 PATH
-#   （worker SSH 进来是裸 shell，没有激活 conda，需要从 rank-0 继承 PATH）。
-#   rank-0 自身在本地前台运行，作为 torchrun rendezvous master。
 #
-# 环境变量（由 init_env.sh / TaiJi 自动注入，无需手动设置）:
-#   HOST_NUM     — 总节点数，例如 4
-#   NODE_IP_0~N  — 各节点 IP，由 set_env.py 解析 NODE_IP_LIST 写入 ~/.bashrc
-#   INDEX        — 当前节点 rank（rank-0 节点上为 0）
 #
-# 用法:
-#   bash launch_dist.sh <训练脚本路径>
-#   示例: bash launch_dist.sh scripts/cpt/cpt_olmo3_full_lhsa_20B_fixmlp_dist.sh
 #
-# 日志:
-#   日志名: <训练脚本基名>_rank<节点号>.txt（基名 = basename 去 .sh）
-#   rank-0: 同时打印到终端
-#   rank-1~N: 在 WORK_DIR 下
 #
-# 推荐配合 tmux 使用，防止 IDE 断开后训练中断:
 #   tmux new -s train
 #   bash launch_dist.sh scripts/cpt/cpt_olmo3_full_lhsa_20B_fixmlp_dist.sh
-#   # Ctrl+B D 可 detach，训练继续运行；tmux attach -t train 可重连
 
 set -euo pipefail
 
 TRAINING_SCRIPT="${1:-scripts/cpt/cpt_olmo3_full_lhsa_20B_fixmlp_dist.sh}"
-# 用于日志文件名: 仅取脚本名、去掉 .sh
 TRAINING_LOG_STEM="$(basename "${TRAINING_SCRIPT}" .sh)"
 WORK_DIR="${WORK_DIR:-$(pwd)}"
 NNODES="${HOST_NUM:?Please set HOST_NUM}"

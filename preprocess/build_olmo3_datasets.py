@@ -42,7 +42,7 @@ def _tokenize_jsonl(path, tokenizer, output_dir):
                 accum_conext = ''
                 for line in text_reader:
                     if not line.strip():
-                        continue # 跳过空行
+                        continue
                     try:
                         accum_conext += line
                         obj = json.loads(accum_conext)
@@ -64,12 +64,9 @@ def _tokenize_jsonl(path, tokenizer, output_dir):
     
 
 def process_file(file_path, input_root, output_root, tokenizer):
-    """处理单个文件的原子操作"""
-    # 构建相对路径
     rel_path = os.path.relpath(file_path, start=input_root)
     output_dir = os.path.join(output_root, os.path.dirname(rel_path))
     
-    # 确保输出目录存在
     os.makedirs(output_dir, exist_ok=True)
     
     try:
@@ -79,40 +76,27 @@ def process_file(file_path, input_root, output_root, tokenizer):
         raise
 
 def file_generator(input_path):
-    """
-    生成器函数：惰性遍历目录下的所有文件
-    避免一次性加载所有文件路径到内存
-    """
     for root, dirs, files in os.walk(input_path, followlinks=True):
         for file in files:
             yield os.path.join(root, file)
 
 
 def concurrent_tokenize(input_path, output_path, tokenizer, max_workers=None):
-    """
-    生产者-消费者模式的并发处理
-    - 每次最多保持 max_workers 个任务在运行
-    - 每完成一个任务，立即从生成器获取下一个文件并提交
-    """
     os.makedirs(output_path, exist_ok=True)
     
     workers = max_workers or multiprocessing.cpu_count()
     print(f"Processing {input_path} with Producer-Consumer pattern, {workers} workers...")
     
-    # 创建文件生成器（惰性加载）
     file_iter = file_generator(input_path)
     files_exhausted = False
     
-    # 统计计数
     submitted_count = 0
     processed_count = 0
     error_count = 0
     
     with ProcessPoolExecutor(max_workers=workers) as executor:
-        # futures 字典: future -> file_path (用于追踪)
         futures = {}
         
-        # ============ 初始化：填满工作队列 ============
         for _ in range(workers):
             try:
                 file_path = next(file_iter)
@@ -131,23 +115,19 @@ def concurrent_tokenize(input_path, output_path, tokenizer, max_workers=None):
         
         print(f"Initial batch submitted: {submitted_count} files")
         
-        # ============ 主循环：处理完成的任务，提交新任务 ============
         while futures:
-            # 等待至少一个任务完成
             done, _ = wait(futures.keys(), return_when=FIRST_COMPLETED)
             
             for future in done:
                 file_path = futures.pop(future)
                 processed_count += 1
                 
-                # 获取结果，处理异常
                 try:
                     future.result()
                 except Exception as e:
                     error_count += 1
                     print(f"[Error {error_count}] Failed: {file_path}: {str(e)}")
                 
-                # ============ 生产者：提交新任务 ============
                 if not files_exhausted:
                     try:
                         new_file_path = next(file_iter)
@@ -161,7 +141,6 @@ def concurrent_tokenize(input_path, output_path, tokenizer, max_workers=None):
                         futures[new_future] = new_file_path
                         submitted_count += 1
                         
-                        # 每100个文件打印一次进度
                         if submitted_count % 100 == 0:
                             print(f"Progress: submitted={submitted_count}, "
                                   f"processed={processed_count}, "
@@ -171,7 +150,6 @@ def concurrent_tokenize(input_path, output_path, tokenizer, max_workers=None):
                         files_exhausted = True
                         print(f"All files submitted. Total: {submitted_count}")
     
-    # 打印最终统计
     print(f"\n{'='*50}")
     print(f"Processing Complete!")
     print(f"  Total submitted: {submitted_count}")

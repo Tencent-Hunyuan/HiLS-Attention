@@ -13,18 +13,10 @@ except ImportError:
 
 
 def load_ckpt(ckpt_path):
-    """
-    加载 HF checkpoint 目录或单个文件。
-    支持:
-      - 目录 (包含 *.safetensors 或 *.bin 文件)
-      - 单个 .safetensors / .bin / .pt / .pth 文件
-    返回: state_dict (OrderedDict)
-    """
     ckpt_path = str(ckpt_path)
 
     if os.path.isdir(ckpt_path):
         state_dict = OrderedDict()
-        # 优先加载 safetensors
         safetensor_files = sorted(glob.glob(os.path.join(ckpt_path, "*.safetensors")))
         if safetensor_files and HAS_SAFETENSORS:
             for f in safetensor_files:
@@ -33,7 +25,6 @@ def load_ckpt(ckpt_path):
                 state_dict.update(shard)
             return state_dict
 
-        # fallback: pytorch bin 文件
         bin_files = sorted(glob.glob(os.path.join(ckpt_path, "*.bin")))
         if bin_files:
             for f in bin_files:
@@ -45,7 +36,6 @@ def load_ckpt(ckpt_path):
         raise FileNotFoundError(f"目录中未找到 safetensors 或 bin 文件: {ckpt_path}")
 
     else:
-        # 单个文件
         if ckpt_path.endswith(".safetensors") and HAS_SAFETENSORS:
             return OrderedDict(load_safetensors(ckpt_path, device="cpu"))
         else:
@@ -53,15 +43,6 @@ def load_ckpt(ckpt_path):
 
 
 def merge_checkpoints(checkpoint_paths, output_path, merge_method='average', weights=None):
-    """
-    合并多个模型检查点
-
-    参数:
-        checkpoint_paths: 检查点路径列表 (HF ckpt 目录或文件)
-        output_path: 合并后模型的保存路径
-        merge_method: 合并方法，可选 'average' 或 'weighted_average'
-        weights: 当使用加权平均时，各模型的权重列表
-    """
     if not checkpoint_paths:
         raise ValueError("至少需要提供一个检查点路径")
 
@@ -71,24 +52,19 @@ def merge_checkpoints(checkpoint_paths, output_path, merge_method='average', wei
     if weights is None:
         weights = [1.0 / len(checkpoint_paths)] * len(checkpoint_paths)
 
-    # 加载第一个检查点
     print(f"处理检查点 1/{len(checkpoint_paths)}: {checkpoint_paths[0]}")
     base_state_dict = load_ckpt(checkpoint_paths[0])
 
-    # 初始化合并后的状态字典
     merged_state_dict = OrderedDict()
     for key in base_state_dict.keys():
         merged_state_dict[key] = weights[0] * base_state_dict[key].float()
 
-    # 释放内存
     del base_state_dict
 
-    # 处理剩余的检查点
     for i, checkpoint_path in enumerate(checkpoint_paths[1:], 1):
         print(f"处理检查点 {i+1}/{len(checkpoint_paths)}: {checkpoint_path}")
         state_dict = load_ckpt(checkpoint_path)
 
-        # 验证状态字典的键是否匹配
         if set(state_dict.keys()) != set(merged_state_dict.keys()):
             missing = set(merged_state_dict.keys()) - set(state_dict.keys())
             extra = set(state_dict.keys()) - set(merged_state_dict.keys())
@@ -104,23 +80,19 @@ def merge_checkpoints(checkpoint_paths, output_path, merge_method='average', wei
 
         del state_dict
 
-    # 转回 bfloat16 保存
     for key in merged_state_dict:
         merged_state_dict[key] = merged_state_dict[key].bfloat16()
 
-    # 保存合并后的检查点
     output_path = Path(output_path)
     output_path.mkdir(parents=True, exist_ok=True)
 
     if HAS_SAFETENSORS:
-        # 保存为 safetensors 格式
         save_safetensors(merged_state_dict, str(output_path / "model.safetensors"))
         print(f"合并后的模型已保存到: {output_path / 'model.safetensors'}")
     else:
         torch.save(merged_state_dict, output_path / "model.bin")
         print(f"合并后的模型已保存到: {output_path / 'model.bin'}")
 
-    # 复制第一个 checkpoint 中的配置文件
     first_ckpt = Path(checkpoint_paths[0])
     if first_ckpt.is_dir():
         import shutil
@@ -150,7 +122,6 @@ def main():
 
     args = parser.parse_args()
 
-    # 确定输出路径
     if args.output:
         output_path = args.output
     else:
