@@ -33,7 +33,7 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
     if command -v python3 >/dev/null 2>&1; then
         PYTHON_BIN=python3
     else
-        echo "python/python3 都不可用，请先激活运行环境" >&2
+        echo "Neither python nor python3 is available, please activate the runtime environment first" >&2
         exit 1
     fi
 fi
@@ -117,24 +117,24 @@ if [ "${#MODEL_NAMES[@]}" -ne "${#HSA_CONFIGS[@]}" ] || \
 fi
 
 if [ "${#GPU_IDS[@]}" -eq 0 ]; then
-    echo "GPU_IDS 不能为空" >&2; exit 1
+    echo "GPU_IDS must not be empty" >&2; exit 1
 fi
 
 if [ "$GPUS_PER_TASK" -lt 1 ]; then
-    echo "GPUS_PER_TASK 必须 >= 1" >&2; exit 1
+    echo "GPUS_PER_TASK must be >= 1" >&2; exit 1
 fi
 
 if [ "$GPUS_PER_TASK" -gt "${#GPU_IDS[@]}" ]; then
-    echo "GPUS_PER_TASK (${GPUS_PER_TASK}) > #GPU_IDS (${#GPU_IDS[@]})，将 clamp 到 ${#GPU_IDS[@]}" >&2
+    echo "GPUS_PER_TASK (${GPUS_PER_TASK}) > #GPU_IDS (${#GPU_IDS[@]}), will clamp to ${#GPU_IDS[@]}" >&2
     GPUS_PER_TASK="${#GPU_IDS[@]}"
 fi
 
 if [ ! -d "$TOKENIZER_PATH" ]; then
-    echo "TOKENIZER_PATH 不存在: $TOKENIZER_PATH" >&2; exit 1
+    echo "TOKENIZER_PATH does not exist: $TOKENIZER_PATH" >&2; exit 1
 fi
 
 if [ ! -d "$OPENCOMPASS_PATH/opencompass" ]; then
-    echo "OPENCOMPASS_PATH 不存在或不是 OpenCompass 仓库: $OPENCOMPASS_PATH" >&2; exit 1
+    echo "OPENCOMPASS_PATH does not exist or is not an OpenCompass repository: $OPENCOMPASS_PATH" >&2; exit 1
 fi
 
 # Kill any lingering burner processes from previous runs.

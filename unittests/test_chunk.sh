@@ -1,1 +1,0 @@
-pytest unittests/test_chunk_attn_pool_tilelang.py -v -s -k "Performance"

@@ -20,7 +20,7 @@ def load_ckpt(ckpt_path):
         safetensor_files = sorted(glob.glob(os.path.join(ckpt_path, "*.safetensors")))
         if safetensor_files and HAS_SAFETENSORS:
             for f in safetensor_files:
-                print(f"  加载 {os.path.basename(f)}")
+                print(f"  Loading {os.path.basename(f)}")
                 shard = load_safetensors(f, device="cpu")
                 state_dict.update(shard)
             return state_dict
@@ -28,12 +28,12 @@ def load_ckpt(ckpt_path):
         bin_files = sorted(glob.glob(os.path.join(ckpt_path, "*.bin")))
         if bin_files:
             for f in bin_files:
-                print(f"  加载 {os.path.basename(f)}")
+                print(f"  Loading {os.path.basename(f)}")
                 shard = torch.load(f, map_location="cpu", weights_only=True)
                 state_dict.update(shard)
             return state_dict
 
-        raise FileNotFoundError(f"目录中未找到 safetensors 或 bin 文件: {ckpt_path}")
+        raise FileNotFoundError(f"No safetensors or bin files found in directory: {ckpt_path}")
 
     else:
         if ckpt_path.endswith(".safetensors") and HAS_SAFETENSORS:
@@ -44,15 +44,15 @@ def load_ckpt(ckpt_path):
 
 def merge_checkpoints(checkpoint_paths, output_path, merge_method='average', weights=None):
     if not checkpoint_paths:
-        raise ValueError("至少需要提供一个检查点路径")
+        raise ValueError("At least one checkpoint path must be provided")
 
     if merge_method == 'weighted_average' and (weights is None or len(weights) != len(checkpoint_paths)):
-        raise ValueError("加权平均需要为每个检查点提供对应的权重")
+        raise ValueError("Weighted average requires a corresponding weight for each checkpoint")
 
     if weights is None:
         weights = [1.0 / len(checkpoint_paths)] * len(checkpoint_paths)
 
-    print(f"处理检查点 1/{len(checkpoint_paths)}: {checkpoint_paths[0]}")
+    print(f"Processing checkpoint 1/{len(checkpoint_paths)}: {checkpoint_paths[0]}")
     base_state_dict = load_ckpt(checkpoint_paths[0])
 
     merged_state_dict = OrderedDict()
@@ -62,17 +62,17 @@ def merge_checkpoints(checkpoint_paths, output_path, merge_method='average', wei
     del base_state_dict
 
     for i, checkpoint_path in enumerate(checkpoint_paths[1:], 1):
-        print(f"处理检查点 {i+1}/{len(checkpoint_paths)}: {checkpoint_path}")
+        print(f"Processing checkpoint {i+1}/{len(checkpoint_paths)}: {checkpoint_path}")
         state_dict = load_ckpt(checkpoint_path)
 
         if set(state_dict.keys()) != set(merged_state_dict.keys()):
             missing = set(merged_state_dict.keys()) - set(state_dict.keys())
             extra = set(state_dict.keys()) - set(merged_state_dict.keys())
-            msg = f"检查点 {checkpoint_path} 的键与基础检查点不匹配"
+            msg = f"Keys of checkpoint {checkpoint_path} do not match the base checkpoint"
             if missing:
-                msg += f"\n  缺少: {list(missing)[:5]}..."
+                msg += f"\n  Missing: {list(missing)[:5]}..."
             if extra:
-                msg += f"\n  多余: {list(extra)[:5]}..."
+                msg += f"\n  Extra: {list(extra)[:5]}..."
             raise ValueError(msg)
 
         for key in state_dict.keys():
@@ -88,10 +88,10 @@ def merge_checkpoints(checkpoint_paths, output_path, merge_method='average', wei
 
     if HAS_SAFETENSORS:
         save_safetensors(merged_state_dict, str(output_path / "model.safetensors"))
-        print(f"合并后的模型已保存到: {output_path / 'model.safetensors'}")
+        print(f"Merged model saved to: {output_path / 'model.safetensors'}")
     else:
         torch.save(merged_state_dict, output_path / "model.bin")
-        print(f"合并后的模型已保存到: {output_path / 'model.bin'}")
+        print(f"Merged model saved to: {output_path / 'model.bin'}")
 
     first_ckpt = Path(checkpoint_paths[0])
     if first_ckpt.is_dir():
@@ -102,23 +102,23 @@ def merge_checkpoints(checkpoint_paths, output_path, merge_method='average', wei
             src = first_ckpt / config_file
             if src.exists():
                 shutil.copy2(str(src), str(output_path / config_file))
-                print(f"  复制配置: {config_file}")
+                print(f"  Copying config: {config_file}")
 
-    print(f"\n合并完成! 输出目录: {output_path}")
+    print(f"\nMerge complete! Output directory: {output_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='合并多个模型检查点')
-    parser.add_argument('checkpoints', nargs='+', help='要合并的检查点路径 (HF ckpt 目录或文件)')
+    parser = argparse.ArgumentParser(description='Merge multiple model checkpoints')
+    parser.add_argument('checkpoints', nargs='+', help='Checkpoint paths to merge (HF ckpt directory or file)')
     parser.add_argument('--output', type=str, default=None,
-                        help='输出目录路径 (默认: 第一个 ckpt 的父目录/merged)')
+                        help='Output directory path (default: parent directory of the first ckpt / merged)')
     parser.add_argument('--memo', type=str, default='merged_model',
-                        help='合并后模型的别名 (用于输出目录名)')
+                        help='Alias for the merged model (used for the output directory name)')
     parser.add_argument('--method', type=str, default='average',
                         choices=['average', 'weighted_average'],
-                        help='合并方法')
+                        help='Merge method')
     parser.add_argument('--weights', type=float, nargs='+', default=None,
-                        help='加权平均的权重列表')
+                        help='List of weights for weighted average')
 
     args = parser.parse_args()
 

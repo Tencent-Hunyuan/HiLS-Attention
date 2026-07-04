@@ -10,7 +10,7 @@ def _pop_cli_arg(name: str):
         return None
     i = sys.argv.index(name)
     if i + 1 >= len(sys.argv):
-        raise ValueError(f"{name} 缺少参数值")
+        raise ValueError(f"{name} is missing an argument value")
     value = sys.argv[i + 1]
     del sys.argv[i : i + 2]
     return value

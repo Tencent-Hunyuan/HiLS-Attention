@@ -90,7 +90,7 @@ def load_model(args, device):
                 args.checkpoint_path, **model_kwargs
             )
     else:
-        assert args.config_path is not None, "必须提供 --config_path 或 --checkpoint_path"
+        assert args.config_path is not None, "--config_path or --checkpoint_path must be provided"
         config = AutoConfig.from_pretrained(args.config_path)
         config.auto_insert_lmk = args.auto_insert_lmk
         model = AutoModelForCausalLM.from_config(config, **model_kwargs).to(device)

@@ -68,7 +68,7 @@ elif command -v python >/dev/null 2>&1; then
 elif command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN=python3
 else
-    echo "python/python3 都不可用，请先激活运行环境" >&2
+    echo "Neither python nor python3 is available, please activate the runtime environment first" >&2
     exit 1
 fi
 
@@ -179,22 +179,22 @@ for entry in "${MODELS[@]}"; do
 done
 
 if [ "${#MODEL_NAMES[@]}" -eq 0 ]; then
-    echo "MODELS 不能为空" >&2
+    echo "MODELS must not be empty" >&2
     exit 1
 fi
 
 if [ "${#GPU_IDS[@]}" -eq 0 ]; then
-    echo "GPU_IDS 不能为空" >&2
+    echo "GPU_IDS must not be empty" >&2
     exit 1
 fi
 
 if [ "$PPL_TP_SIZE" -gt 1 ] && [ "${#PPL_TP_GPU_IDS[@]}" -lt "$PPL_TP_SIZE" ]; then
-    echo "PPL_TP_GPU_IDS 数量 (${#PPL_TP_GPU_IDS[@]}) 小于 PPL_TP_SIZE=${PPL_TP_SIZE}" >&2
+    echo "PPL_TP_GPU_IDS count (${#PPL_TP_GPU_IDS[@]}) is less than PPL_TP_SIZE=${PPL_TP_SIZE}" >&2
     exit 1
 fi
 
 if [ "$RULER_TP_SIZE" -gt 1 ] && [ "${#RULER_TP_GPU_IDS[@]}" -lt "$RULER_TP_SIZE" ]; then
-    echo "RULER_TP_GPU_IDS 数量 (${#RULER_TP_GPU_IDS[@]}) 小于 RULER_TP_SIZE=${RULER_TP_SIZE}" >&2
+    echo "RULER_TP_GPU_IDS count (${#RULER_TP_GPU_IDS[@]}) is less than RULER_TP_SIZE=${RULER_TP_SIZE}" >&2
     exit 1
 fi
 

@@ -25,7 +25,7 @@ elif command -v python >/dev/null 2>&1; then
 elif command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN=python3
 else
-    echo "python/python3 都不可用，请先激活运行环境" >&2
+    echo "Neither python nor python3 is available, please activate the runtime environment first" >&2
     exit 1
 fi
 
@@ -78,7 +78,7 @@ for entry in "${MODELS[@]}"; do
 done
 
 if [ "${#MODEL_NAMES[@]}" -eq 0 ]; then
-    echo "MODELS 不能为空" >&2
+    echo "MODELS must not be empty" >&2
     exit 1
 fi
 
