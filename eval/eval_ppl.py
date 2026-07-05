@@ -52,6 +52,8 @@ def should_use_hf_model(args):
 
 
 def should_use_hf_loader(args):
+    if getattr(args, "use_dcp_checkpoint", False):
+        return False
     if should_use_hf_model(args):
         return True
     return "hils" in read_model_type(args.config_path, args.checkpoint_path)
@@ -69,8 +71,6 @@ def load_hils_config(config_path):
 
 
 def load_eval_config(config_path, checkpoint_path=None):
-    if is_hils_model(config_path, checkpoint_path):
-        return load_hils_config(config_path)
     return AutoConfig.from_pretrained(config_path, trust_remote_code=True)
 
 
@@ -100,8 +100,9 @@ def register_hils_model(config_path=None, checkpoint_path=None):
     from models.FlashHiLS.configuration_hils import HiLSConfig
 
     class EvalHiLSConfig(HiLSConfig):
-        model_type = model_type
+        pass
 
+    EvalHiLSConfig.model_type = model_type
     HiLSForCausalLM.config_class = EvalHiLSConfig
     _register_with_exist_ok(AutoConfig.register, model_type, EvalHiLSConfig)
     _register_with_exist_ok(AutoModelForCausalLM.register, EvalHiLSConfig, HiLSForCausalLM)
@@ -317,7 +318,7 @@ def build_eval_model(args, device, tp_size=1, use_hf_tp=False, use_veomni_tp=Fal
     )
 
     if args.checkpoint_path:
-        if is_dcp_checkpoint(args.checkpoint_path):
+        if getattr(args, "use_dcp_checkpoint", False) or is_dcp_checkpoint(args.checkpoint_path):
             Checkpointer = build_checkpointer(dist_backend='fsdp2', ckpt_manager='dcp')
             Checkpointer.load(args.checkpoint_path, {"model": model})
         else:
@@ -496,8 +497,9 @@ def forward_chunk_prefill_logits(
 def compute_ppl_loss(logits, label_ids, eval_last_k_tokens, insert_lmk, ce_fct):
     if eval_last_k_tokens > 0:
         if insert_lmk:
-            pred_logits = logits[:, -eval_last_k_tokens:, :]
-            target_labels = label_ids[:, -eval_last_k_tokens:]
+            k = min(eval_last_k_tokens, logits.shape[1])
+            pred_logits = logits[:, -k:, :]
+            target_labels = label_ids[:, -k:]
             valid_mask = (target_labels != -100).squeeze(0)
             return ce_fct(
                 pred_logits[0, valid_mask, :],
@@ -673,6 +675,11 @@ if __name__ == "__main__":
     cmd.add_argument("--parallel_mode", default="fsdp1", type=str)
     cmd.add_argument("--adjust_lmk_pos", action="store_true")
     cmd.add_argument("--use_hf_model", action="store_true")
+    cmd.add_argument(
+        "--use_dcp_checkpoint",
+        action="store_true",
+        help="Load --checkpoint_path with VeOmni DCP checkpointer instead of HF from_pretrained.",
+    )
     cmd.add_argument(
         "--skip_hils_prefill",
         action="store_true",

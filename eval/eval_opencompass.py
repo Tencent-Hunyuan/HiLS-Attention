@@ -59,9 +59,10 @@ if _hils_resolved[0] is not None:
 
 
     class OpenCompassHiLSConfig(HiLSConfig):
-        model_type = model_type
+        pass
 
 
+    OpenCompassHiLSConfig.model_type = model_type
     AutoConfig.register(model_type, OpenCompassHiLSConfig, exist_ok=True)
     HiLSForCausalLM.config_class = OpenCompassHiLSConfig
     AutoModelForCausalLM.register(OpenCompassHiLSConfig, HiLSForCausalLM, exist_ok=True)

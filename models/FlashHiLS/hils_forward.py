@@ -2,7 +2,6 @@
 
 import inspect
 
-from utils.flex_attn import cu_seqlens_to_doc_ids
 import torch
 from transformers.cache_utils import Cache, DynamicCache, DynamicLayer
 from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask
@@ -17,6 +16,20 @@ from veomni.utils.seqlen_pos_transform_utils import prepare_fa_kwargs_from_posit
 from utils.landmark_utils import insert_special_tokens, create_position_ids_with_landmarks
 
 logger = logging.get_logger(__name__)
+
+
+def cu_seqlens_to_doc_ids(cu_seq_lens, total_len, device):
+    """Convert cumulative sequence lengths to per-token document ids."""
+    if not isinstance(cu_seq_lens, torch.Tensor):
+        cu_seq_lens = torch.tensor(cu_seq_lens, dtype=torch.int32, device=device)
+    else:
+        cu_seq_lens = cu_seq_lens.to(device)
+    doc_ids = torch.zeros(total_len, dtype=torch.int32, device=device)
+    boundaries = cu_seq_lens[1:-1]
+    if boundaries.numel() > 0:
+        doc_ids[boundaries.long()] = 1
+        doc_ids = doc_ids.cumsum(0)
+    return doc_ids
 
 
 def _build_mask_kwargs(

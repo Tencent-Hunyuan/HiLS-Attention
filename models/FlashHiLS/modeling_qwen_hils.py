@@ -6,7 +6,6 @@ import torch
 import math
 from torch import nn
 from .hils_attention import HiLSAttention
-from utils.flex_attn import flex_attn
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache, DynamicLayer
 from transformers.generation import GenerationMixin
@@ -92,12 +91,14 @@ class GenerateState:
     active: bool = False
     decode_token_count: int = 0
     next_pos: int = 0
+    cache_seq_len: int = 0
     lmk_positions_in_input: Optional[list] = None
 
     def reset(self):
         self.active = False
         self.decode_token_count = 0
         self.next_pos = 0
+        self.cache_seq_len = 0
         self.lmk_positions_in_input = None
 
 
@@ -811,6 +812,24 @@ class HiLSForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
     def get_decoder(self):
         return self.model
 
+    @staticmethod
+    def _is_empty_generation_cache(past_key_values) -> bool:
+        if past_key_values is None:
+            return True
+        if not isinstance(past_key_values, Cache):
+            return False
+        layers = getattr(past_key_values, "layers", None)
+        if layers is None:
+            return past_key_values.get_seq_length() == 0
+        return all(layer.get_seq_length() == 0 for layer in layers)
+
+    def generate(self, *args, **kwargs):
+        self._gen_state.reset()
+        try:
+            return GenerationMixin.generate(self, *args, **kwargs)
+        finally:
+            self._gen_state.reset()
+
     def _filter_lmk_hidden_states(
         self,
         hidden_states: torch.Tensor,
@@ -830,20 +849,62 @@ class HiLSForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
     def prepare_inputs_for_generation(
         self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None,
         cache_position=None, position_ids=None, use_cache=True,
-        logits_to_keep=0, **kwargs,
+        logits_to_keep=0, num_logits_to_keep=None, **kwargs,
     ):
         gs = self._gen_state
-        if past_key_values is None or (
-            isinstance(past_key_values, Cache) and past_key_values.get_seq_length() == 0
-        ):
+        if num_logits_to_keep is not None:
+            logits_to_keep = num_logits_to_keep
+        if isinstance(logits_to_keep, int) and logits_to_keep == 0:
+            logits_to_keep = 1
+
+        if not self.insert_landmarks:
+            gs.active = False
+            gs.lmk_positions_in_input = None
+
+            past_length = 0
+            if past_key_values is not None:
+                if isinstance(past_key_values, Cache):
+                    past_length = past_key_values.get_seq_length()
+                else:
+                    past_length = past_key_values[0][0].shape[2] if past_key_values else 0
+
+            model_input_ids = input_ids[:, -1:] if past_length > 0 else input_ids
+            seq_len = model_input_ids.shape[1]
+            if cache_position is None:
+                cache_position = torch.arange(past_length, past_length + seq_len, device=input_ids.device)
+
+            if position_ids is None:
+                if attention_mask is not None:
+                    position_ids = attention_mask.long().cumsum(-1) - 1
+                    position_ids.masked_fill_(attention_mask == 0, 1)
+                    if past_length > 0:
+                        position_ids = position_ids[:, -seq_len:]
+                else:
+                    position_ids = cache_position.unsqueeze(0).expand(model_input_ids.shape[0], -1)
+
+            return {
+                "input_ids": model_input_ids,
+                "position_ids": position_ids,
+                "past_key_values": past_key_values,
+                "use_cache": use_cache,
+                "attention_mask": attention_mask,
+                "cache_position": cache_position,
+                "logits_to_keep": logits_to_keep,
+            }
+
+        if self._is_empty_generation_cache(past_key_values):
+            past_key_values = None
             orig_len = input_ids.shape[1]
             position_ids = create_position_ids_with_landmarks(
                 None, orig_len, self.chunk_size, input_ids.device
             )
             input_ids = insert_special_tokens(input_ids, self.lmk_id, self.chunk_size)
+            seq_len_with_lmk = input_ids.shape[1]
+            cache_position = torch.arange(0, seq_len_with_lmk, device=input_ids.device)
 
             gs.decode_token_count = orig_len % (self.chunk_size - 1)
             gs.next_pos = orig_len
+            gs.cache_seq_len = seq_len_with_lmk
             gs.active = True
             gs.lmk_positions_in_input = None
 
@@ -853,26 +914,46 @@ class HiLSForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
                 "past_key_values": past_key_values,
                 "use_cache": use_cache,
                 "attention_mask": None,
+                "cache_position": cache_position,
                 "logits_to_keep": logits_to_keep,
             }
 
         last_token = input_ids[:, -1:]
+        if gs.cache_seq_len > 0:
+            past_length = gs.cache_seq_len
+        elif isinstance(past_key_values, Cache):
+            past_length = past_key_values.get_seq_length()
+        else:
+            past_length = 0
 
-        if gs.decode_token_count < self.chunk_size - 2:
+        if cache_position is not None and cache_position.numel() > 0:
+            incoming_pos = int(cache_position[-1].item())
+            if incoming_pos < past_length:
+                last_real_pos = incoming_pos
+            else:
+                last_real_pos = incoming_pos - incoming_pos // self.chunk_size
+        else:
+            last_real_pos = input_ids.shape[1] - 1
+
+        chunk_offset = last_real_pos % (self.chunk_size - 1)
+
+        if chunk_offset < self.chunk_size - 2:
             model_input_ids = last_token
-            pos_ids = torch.tensor([[gs.next_pos]], device=input_ids.device)
-            gs.decode_token_count += 1
-            gs.next_pos += 1
+            pos_ids = torch.tensor([[last_real_pos]], device=input_ids.device)
+            cache_position = torch.tensor([past_length], device=input_ids.device)
+            gs.decode_token_count = (chunk_offset + 1) % (self.chunk_size - 1)
+            gs.next_pos = last_real_pos + 1
+            gs.cache_seq_len = past_length + 1
             gs.lmk_positions_in_input = None
         else:
             lmk_token = torch.full_like(last_token, self.lmk_id)
             model_input_ids = torch.cat([last_token, lmk_token], dim=1)
-            pos_ids = torch.tensor(
-                [[gs.next_pos, gs.next_pos + 1]], device=input_ids.device
-            )
+            pos_ids = torch.tensor([[last_real_pos, last_real_pos + 1]], device=input_ids.device)
+            cache_position = torch.tensor([past_length, past_length + 1], device=input_ids.device)
             gs.lmk_positions_in_input = [1]
             gs.decode_token_count = 0
-            gs.next_pos = gs.next_pos + 1
+            gs.next_pos = last_real_pos + 1
+            gs.cache_seq_len = past_length + 2
 
         return {
             "input_ids": model_input_ids,
@@ -880,6 +961,7 @@ class HiLSForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
             "past_key_values": past_key_values,
             "use_cache": use_cache,
             "attention_mask": None,
+            "cache_position": cache_position,
             "logits_to_keep": logits_to_keep,
         }
 
