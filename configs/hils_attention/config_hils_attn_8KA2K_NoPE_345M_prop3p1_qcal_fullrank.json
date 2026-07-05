@@ -27,10 +27,10 @@
     "vocab_size": 100278,
     "full_attn_interleave": 1,
     "chunk_size": 64,
-    "hsa_topk": 32,
+    "hils_topk": 32,
     "_attn_implementation": "flash_attention_3",
     "adjust_lmk_pos": true,
     "enable_lmk_q_proj": true,
     "enable_prior_query": true,
-    "hsa_sliding_window": 512
+    "hils_sliding_window": 512
 }

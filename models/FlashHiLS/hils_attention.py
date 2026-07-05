@@ -224,7 +224,7 @@ class HiLSAttention(nn.Module):
         self.o_proj = nn.Linear(self.d_model, self.d_model, bias=False)
 
         self.enable_lmk_q_proj = getattr(config, "enable_lmk_q_proj", False)
-        self.apply_hsa_rope = getattr(config, "apply_hsa_rope", False)
+        self.apply_hils_rope = getattr(config, "apply_hils_rope", False)
 
         if self.enable_lmk_q_proj:
             self.lmk_q_lora_dim = getattr(config, 'lmk_q_lora_dim', -1)
@@ -244,7 +244,7 @@ class HiLSAttention(nn.Module):
         if not self.enable_lmk_q_proj:
             logger.warning_once("Recommend to set enable_lmk_q_proj=True for better performance")
 
-        self.topk = config.hsa_topk
+        self.topk = config.hils_topk
 
         self.chunk_size = config.chunk_size
         self.layerwise_qk_norm = getattr(config, "layerwise_qk_norm", False)
@@ -260,14 +260,14 @@ class HiLSAttention(nn.Module):
 
         self.scaling = self.head_dim ** -0.5
         self.sliding_window = config.sliding_window
-        self.hsa_sliding_window = getattr(config, "hsa_sliding_window", self.sliding_window)
+        self.hils_sliding_window = getattr(config, "hils_sliding_window", self.sliding_window)
         
         self.is_causal = True
         
         from ops.hils_fwd_bwd_head import HSA_block_M_head as HSA
         from ops.topk_head_softmax import online_softmax_topk_head as topk_func
         self.topk_func = topk_func
-        self.hsa_func = HSA
+        self.hils_func = HSA
 
         self.enable_prior_query = getattr(config, "enable_prior_query", True)
         self.enable_chunk_pooling = getattr(config, "enable_chunk_pooling", False)
@@ -295,11 +295,11 @@ class HiLSAttention(nn.Module):
         B, L, _ = hidden_states.shape
         cos, sin = position_embeddings
 
-        hsa_q = self.q_proj(hidden_states)
+        hils_q = self.q_proj(hidden_states)
         if self.enable_lmk_q_proj:
             lmk_q = self.lmk_q_proj(hidden_states)
             if self.lmk_q_lora_dim > 0:
-                lmk_q = lmk_q + hsa_q
+                lmk_q = lmk_q + hils_q
             if self.layerwise_lmkq_norm:
                 lmk_q_norm = self.lmk_q_norm(lmk_q)
                 lmk_q_norm = rearrange(lmk_q_norm, 'B L (h d)->B L h d', h=self.h_q)
@@ -308,56 +308,56 @@ class HiLSAttention(nn.Module):
                 lmk_q_norm = self.lmk_q_norm(lmk_q)  # (B, L, h_q, d)
 
         if self.layerwise_qk_norm:
-            hsa_q = self.q_norm(hsa_q)
-        hsa_q = rearrange(hsa_q, 'B L (h d)->B L h d', d=self.head_dim)
+            hils_q = self.q_norm(hils_q)
+        hils_q = rearrange(hils_q, 'B L (h d)->B L h d', d=self.head_dim)
 
         if not self.layerwise_qk_norm:
-            hsa_q_norm_nope = self.q_norm(hsa_q)  # (B, L, h, d)
+            hils_q_norm_nope = self.q_norm(hils_q)  # (B, L, h, d)
         else:
-            hsa_q_norm_nope = hsa_q
+            hils_q_norm_nope = hils_q
 
         if not self.enable_lmk_q_proj:
-            lmk_q_norm = hsa_q_norm_nope
+            lmk_q_norm = hils_q_norm_nope
 
-        hsa_k = self.k_proj(hidden_states)
+        hils_k = self.k_proj(hidden_states)
         if self.layerwise_qk_norm:
-            hsa_k = self.k_norm(hsa_k)
-        hsa_k = rearrange(hsa_k, 'B L (h d)->B L h d', d=self.head_dim)
+            hils_k = self.k_norm(hils_k)
+        hils_k = rearrange(hils_k, 'B L (h d)->B L h d', d=self.head_dim)
 
         if not self.layerwise_qk_norm:
-            hsa_k_norm_nope = self.k_norm(hsa_k)
+            hils_k_norm_nope = self.k_norm(hils_k)
         else:
-            hsa_k_norm_nope = hsa_k
+            hils_k_norm_nope = hils_k
 
-        hsa_v = self.v_proj(hidden_states)
-        hsa_v = rearrange(hsa_v, 'B L (h d)->B L h d', d=self.head_dim)
+        hils_v = self.v_proj(hidden_states)
+        hils_v = rearrange(hils_v, 'B L (h d)->B L h d', d=self.head_dim)
 
-        if self.apply_hsa_rope:
-            hsa_q_norm_rope, hsa_k_norm_rope = apply_rotary_pos_emb(hsa_q_norm_nope.transpose(1, 2), hsa_k_norm_nope.transpose(1, 2), cos, sin)
-            hsa_q_norm_rope = hsa_q_norm_rope.transpose(1, 2).contiguous()
-            hsa_k_norm_rope = hsa_k_norm_rope.transpose(1, 2).contiguous()
+        if self.apply_hils_rope:
+            hils_q_norm_rope, hils_k_norm_rope = apply_rotary_pos_emb(hils_q_norm_nope.transpose(1, 2), hils_k_norm_nope.transpose(1, 2), cos, sin)
+            hils_q_norm_rope = hils_q_norm_rope.transpose(1, 2).contiguous()
+            hils_k_norm_rope = hils_k_norm_rope.transpose(1, 2).contiguous()
             if self.enable_lmk_q_proj:
                 lmk_q_norm = single_tensor_rope_autograd(lmk_q_norm, cos, sin)
             else:
-                lmk_q_norm = hsa_q_norm_rope
+                lmk_q_norm = hils_q_norm_rope
         else:
-            hsa_q_norm_rope = hsa_q_norm_nope
-            hsa_k_norm_rope = hsa_k_norm_nope
+            hils_q_norm_rope = hils_q_norm_nope
+            hils_k_norm_rope = hils_k_norm_nope
 
         # Inference/chunk-prefill: HSA KV cache.  Keep the cached K in the
         # same representation that retrieval and HSA attention consume.
-        hsa_k_for_cache = hsa_k_norm_rope if self.apply_hsa_rope else hsa_k_norm_nope
+        hils_k_for_cache = hils_k_norm_rope if self.apply_hils_rope else hils_k_norm_nope
         if use_cache and past_key_values is not None:
-            hsa_cache_idx = self.layer_idx + self.config.num_hidden_layers
+            hils_cache_idx = self.layer_idx + self.config.num_hidden_layers
             cache_kwargs = {"cache_position": cache_position}
-            hsa_k_for_cache, hsa_v = past_key_values.update(
-                hsa_k_for_cache, hsa_v, hsa_cache_idx, cache_kwargs
+            hils_k_for_cache, hils_v = past_key_values.update(
+                hils_k_for_cache, hils_v, hils_cache_idx, cache_kwargs
             )
-            if self.apply_hsa_rope:
-                hsa_k_norm_rope = hsa_k_for_cache
+            if self.apply_hils_rope:
+                hils_k_norm_rope = hils_k_for_cache
             else:
-                hsa_k_norm_nope = hsa_k_for_cache
-                hsa_k_norm_rope = hsa_k_norm_nope
+                hils_k_norm_nope = hils_k_for_cache
+                hils_k_norm_rope = hils_k_norm_nope
 
         cu_seq_lens_q = kwargs.get("cu_seq_lens_q", None)
         doc_ids = kwargs.get("doc_ids", None)
@@ -371,10 +371,10 @@ class HiLSAttention(nn.Module):
             assert doc_ids is None, f'doc_ids is not supported for batch size > 1, but got doc ids {doc_ids}'
 
         swa_o, lse_sum = flex_attn_tl(
-            hsa_q_norm_rope,
-            hsa_k_norm_rope,
-            hsa_v,
-            window_size=self.hsa_sliding_window,
+            hils_q_norm_rope,
+            hils_k_norm_rope,
+            hils_v,
+            window_size=self.hils_sliding_window,
             chunk_size=self.chunk_size,
             training=(past_key_values is None),
             mask_lmk=True,
@@ -383,12 +383,12 @@ class HiLSAttention(nn.Module):
         lse_sum = lse_sum.contiguous()
         lse_sum = lse_sum.to(hidden_states.dtype)
 
-        full_seq_len = hsa_k_for_cache.shape[1]
+        full_seq_len = hils_k_for_cache.shape[1]
         if full_seq_len >= self.chunk_size:
-            if self.apply_hsa_rope:
-                lmk_k_source = hsa_k_norm_rope
+            if self.apply_hils_rope:
+                lmk_k_source = hils_k_norm_rope
             else:
-                lmk_k_source = hsa_k_norm_nope
+                lmk_k_source = hils_k_norm_nope
 
             prior_b = None  # (B, num_chunks, h_q) or None
             full_chunks = full_seq_len // self.chunk_size
@@ -398,10 +398,10 @@ class HiLSAttention(nn.Module):
                 is_continuation = (use_cache and past_key_values is not None and L < full_seq_len)
 
                 if is_continuation:
-                    if not hasattr(past_key_values, '_hsa_prior_cache'):
-                        past_key_values._hsa_prior_cache = {}
+                    if not hasattr(past_key_values, '_hils_prior_cache'):
+                        past_key_values._hils_prior_cache = {}
                     cache_key = self.layer_idx
-                    cached = past_key_values._hsa_prior_cache.get(cache_key, None)
+                    cached = past_key_values._hils_prior_cache.get(cache_key, None)
 
                     prev_seq_len = full_seq_len - L
                     prev_full_chunks = prev_seq_len // self.chunk_size
@@ -418,7 +418,7 @@ class HiLSAttention(nn.Module):
                         ]
                         if self.shared_q_c:
                             new_mu_q = self.q_c.unsqueeze(0).unsqueeze(0).expand(B, new_chunks, -1, -1)
-                            if self.apply_hsa_rope:
+                            if self.apply_hils_rope:
                                 q_c_cos = cos[:, boundary_local, :]
                                 q_c_sin = sin[:, boundary_local, :]
                                 new_mu_q = single_tensor_rope_autograd(new_mu_q.contiguous(), q_c_cos, q_c_sin)
@@ -447,7 +447,7 @@ class HiLSAttention(nn.Module):
                             lmk_k = new_lmk_k
                             prior_b = new_prior_b
 
-                        past_key_values._hsa_prior_cache[cache_key] = {
+                        past_key_values._hils_prior_cache[cache_key] = {
                             'lmk_k': lmk_k,
                             'prior_b': prior_b,
                         }
@@ -467,7 +467,7 @@ class HiLSAttention(nn.Module):
 
                     if self.shared_q_c:
                         mu_q = self.q_c.unsqueeze(0).unsqueeze(0).expand(B, full_chunks, -1, -1)
-                        if self.apply_hsa_rope:
+                        if self.apply_hils_rope:
                             q_c_cos = cos[:, self.chunk_size - 1::self.chunk_size, :][:, :full_chunks]
                             q_c_sin = sin[:, self.chunk_size - 1::self.chunk_size, :][:, :full_chunks]
                             mu_q = single_tensor_rope_autograd(mu_q.contiguous(), q_c_cos, q_c_sin)
@@ -497,9 +497,9 @@ class HiLSAttention(nn.Module):
                             lmk_k = pooled_lmk_k
 
                     if use_cache and past_key_values is not None and prior_b is not None:
-                        if not hasattr(past_key_values, '_hsa_prior_cache'):
-                            past_key_values._hsa_prior_cache = {}
-                        past_key_values._hsa_prior_cache[self.layer_idx] = {
+                        if not hasattr(past_key_values, '_hils_prior_cache'):
+                            past_key_values._hils_prior_cache = {}
+                        past_key_values._hils_prior_cache[self.layer_idx] = {
                             'lmk_k': lmk_k,
                             'prior_b': prior_b,
                         }
@@ -508,7 +508,7 @@ class HiLSAttention(nn.Module):
                     lmk_k = lmk_k_source[:, : full_chunks * self.chunk_size, :, :]
                     lmk_k = rearrange(lmk_k, "b (n s) h d -> b n s h d", s=self.chunk_size).mean(dim=2)
                 else:
-                    lmk_k = lmk_k_source[:, self.chunk_size - 1::self.chunk_size, :, :]  # (B, L // S, hsa_kv, d)
+                    lmk_k = lmk_k_source[:, self.chunk_size - 1::self.chunk_size, :, :]  # (B, L // S, hils_kv, d)
 
             B, S,  H, D = lmk_k.shape
             lmk_k = lmk_k.reshape(B, S, H, D)
@@ -523,7 +523,7 @@ class HiLSAttention(nn.Module):
                 lse_sum,
                 self.topk,
                 block_size=self.chunk_size,
-                window_size=self.hsa_sliding_window,
+                window_size=self.hils_sliding_window,
                 is_training=self.training,
                 is_causal=True,
                 q_offset=q_offset,
@@ -561,18 +561,18 @@ class HiLSAttention(nn.Module):
                 swa_weight_idx = -2
             chunk_weights = F.softmax(cat_scores, dim=-1).to(hidden_states.dtype) # (B, L, h_kv, K)
 
-            if self.apply_hsa_rope:
-                hsa_q_norm = hsa_q_norm_rope
-                hsa_k_norm = hsa_k_norm_rope
+            if self.apply_hils_rope:
+                hils_q_norm = hils_q_norm_rope
+                hils_k_norm = hils_k_norm_rope
             else:
-                hsa_q_norm = hsa_q_norm_nope
-                hsa_k_norm = hsa_k_norm_nope
+                hils_q_norm = hils_q_norm_nope
+                hils_k_norm = hils_k_norm_nope
 
-            hsa_o = self.hsa_func(hsa_q_norm, hsa_k_norm, hsa_v, weights=chunk_weights, indices=indices, block_size=self.chunk_size, mask_last_token=True, is_training=self.training)
+            hils_o = self.hils_func(hils_q_norm, hils_k_norm, hils_v, weights=chunk_weights, indices=indices, block_size=self.chunk_size, mask_last_token=True, is_training=self.training)
             swa_o_weight = chunk_weights[:, :, :, swa_weight_idx]  # (B, L, h_kv)
 
             swa_o_weight_expanded = swa_o_weight
-            o_lower = torch.addcmul(hsa_o, swa_o, swa_o_weight_expanded.unsqueeze(-1))
+            o_lower = torch.addcmul(hils_o, swa_o, swa_o_weight_expanded.unsqueeze(-1))
         else:
             if self.enable_softmax1:
                 swa_o_weight = torch.sigmoid(lse_sum).to(swa_o.dtype)

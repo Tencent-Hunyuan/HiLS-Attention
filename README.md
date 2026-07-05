@@ -138,7 +138,7 @@ Example model config (`configs/hils_attention/config_hils_attn_8KA2K_HoPE_345M_p
   "num_key_value_heads": 4,
   "sliding_window": 512,
   "chunk_size": 64,
-  "hsa_topk": 32,
+  "hils_topk": 32,
   "full_attn_interleave": 4,
   "enable_lmk_q_proj": true
 }
@@ -147,5 +147,5 @@ Example model config (`configs/hils_attention/config_hils_attn_8KA2K_HoPE_345M_p
 Key hyperparameters:
 - `sliding_window`: Local SWA window size
 - `chunk_size`: Landmark token interval for HiLS
-- `hsa_topk`: Number of top-k chunks to retrieve
+- `hils_topk`: Number of top-k chunks to retrieve
 - `full_attn_interleave`: Ratio of full attention layers interleaved with HiLS layers

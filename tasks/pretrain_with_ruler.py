@@ -423,7 +423,7 @@ def main():
             f"[hsa-topk] runtime schedule enabled: {args.train.hsa_topk_decay_start} -> "
             f"{args.train.hsa_topk_decay_end}; initial runtime topk={current_hsa_topk} "
             f"(granularity={args.train.hsa_topk_decay_granularity}) "
-            f"on {updated_layers} HSA layers. model_config.hsa_topk remains {getattr(model_config, 'hsa_topk', None)}."
+            f"on {updated_layers} HSA layers. model_config.hils_topk remains {getattr(model_config, 'hils_topk', None)}."
         )
 
     helper.empty_cache()

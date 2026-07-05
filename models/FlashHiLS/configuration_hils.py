@@ -171,7 +171,7 @@ class HSAConfig(PretrainedConfig):
         attention_dropout=0.0,
         chunk_size=64,
         enable_softmax1=True,
-        hsa_topk: int = 16,
+        hils_topk: int = 16,
         full_attn_interleave: int = 4,
         num_swa_layers: int = 0,
         **kwargs,
@@ -187,7 +187,7 @@ class HSAConfig(PretrainedConfig):
         self.max_window_layers = max_window_layers
         self.chunk_size = chunk_size
         self.enable_softmax1 = enable_softmax1
-        self.hsa_topk = hsa_topk
+        self.hils_topk = hils_topk
         self.full_attn_interleave = full_attn_interleave
         self.num_swa_layers = num_swa_layers
 

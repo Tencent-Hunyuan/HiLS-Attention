@@ -67,7 +67,7 @@ def _build_hybrid_model(device: str, dtype: torch.dtype, sliding_window: int) ->
         attention_dropout=0.0,
         rms_norm_eps=1e-6,
         chunk_size=CHUNK_SIZE,
-        hsa_topk=16,
+        hils_topk=16,
     )
     config._attn_implementation = "flash_attention_2"
     model = HiLSForCausalLM(config).to(device=device, dtype=dtype)

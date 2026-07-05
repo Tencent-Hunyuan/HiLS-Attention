@@ -181,15 +181,15 @@ def hils_model_forward(
 
     hidden_states = inputs_embeds
     position_embeddings = self.rotary_emb(hidden_states, position_ids)
-    hsa_position_embeddings = None
-    hsa_rotary_emb = getattr(self, "hsa_rotary_emb", None)
-    if hsa_rotary_emb is not None:
-        hsa_position_embeddings = hsa_rotary_emb(hidden_states, position_ids)
+    hils_position_embeddings = None
+    hils_rotary_emb = getattr(self, "hils_rotary_emb", None)
+    if hils_rotary_emb is not None:
+        hils_position_embeddings = hils_rotary_emb(hidden_states, position_ids)
 
     sp_group = get_parallel_state().sp_group if get_parallel_state().sp_enabled else None
     position_embeddings = slice_position_embedding(position_embeddings, dim=1, sp_group=sp_group)
-    if hsa_position_embeddings is not None:
-        hsa_position_embeddings = slice_position_embedding(hsa_position_embeddings, dim=1, sp_group=sp_group)
+    if hils_position_embeddings is not None:
+        hils_position_embeddings = slice_position_embedding(hils_position_embeddings, dim=1, sp_group=sp_group)
 
     all_hidden_states = () if output_hidden_states else None
     all_self_attns = () if output_attentions else None
@@ -200,8 +200,8 @@ def hils_model_forward(
 
         layer_flash_attn_kwargs = flash_attn_kwargs
         layer_position_embeddings = position_embeddings
-        if hsa_position_embeddings is not None and getattr(decoder_layer, "use_hsa_rotary_embedding", False):
-            layer_position_embeddings = hsa_position_embeddings
+        if hils_position_embeddings is not None and getattr(decoder_layer, "use_hils_rotary_embedding", False):
+            layer_position_embeddings = hils_position_embeddings
         attention_type = getattr(
             decoder_layer,
             "attention_type",

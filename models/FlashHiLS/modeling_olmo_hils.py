@@ -423,7 +423,7 @@ class Olmo3DecoderLayer(GradientCheckpointingLayer):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.self_attn = attn_cls(config=config, layer_idx=layer_idx)
-        self.use_hsa_rotary_embedding = hasattr(self.self_attn, "hsa_func")
+        self.use_hils_rotary_embedding = hasattr(self.self_attn, "hils_func")
 
         self.mlp = Olmo3MLP(config)
         self.post_attention_layernorm = Olmo3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -672,7 +672,7 @@ class HiLSModel(Olmo3PreTrainedModel):
             self.rotary_emb = Olmo3RotaryEmbedding_olmo3(config=config)
         else:
             self.rotary_emb = Qwen3RotaryEmbedding(config=config)
-        self.hsa_rotary_emb = (
+        self.hils_rotary_emb = (
             HoPERotaryEmbedding(config=config)
             if getattr(config, 'use_hope', False)
             else None

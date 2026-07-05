@@ -1126,7 +1126,7 @@ def _load_real_indices_for_breakdown(pt_path, B, layer_idx=None, device="cuda"):
     samples = saved["samples"]
     num_samples = len(samples)
     print(f"  config: seq_len={config['seq_len']}, chunk_size={config['chunk_size']}, "
-          f"hsa_topk={config['hsa_topk']}, H_kv={config['num_key_value_heads']}")
+          f"hils_topk={config['hils_topk']}, H_kv={config['num_key_value_heads']}")
     print(f"  num_samples={num_samples}, required B={B}")
     assert num_samples >= B, f"num_samples {num_samples} is less than B={B}"
 
@@ -1138,7 +1138,7 @@ def _load_real_indices_for_breakdown(pt_path, B, layer_idx=None, device="cuda"):
         assert layer_idx in all_layer_idxs
     print(f"  Available HSA layers: {all_layer_idxs}")
 
-    S = config["hsa_topk"]
+    S = config["hils_topk"]
     indices_list, weights_list = [], []
     for i in range(B):
         layer_data = samples[i]["layers"][layer_idx]
