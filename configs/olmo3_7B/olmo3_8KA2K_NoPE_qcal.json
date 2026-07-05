@@ -26,8 +26,6 @@
     "use_sliding_window": true,
     "vocab_size": 100278,
     "full_attn_interleave": 4,
-    "hsa_heads": 32,
-    "hsa_qk_ratio": 1,
     "chunk_size": 64,
     "hsa_topk": 32,
     "_attn_implementation": "flash_attention_3",

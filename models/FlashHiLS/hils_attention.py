@@ -267,13 +267,10 @@ class HiLSAttention(nn.Module):
         
         self.is_causal = True
         
-        hsa_mode = config.hsa_mode
-
         from ops.hils_fwd_bwd_head import HSA_block_M_head as HSA
         from ops.topk_head_softmax import online_softmax_topk_head as topk_func
         self.topk_func = topk_func
         self.hsa_func = HSA
-        self.hsa_mode = hsa_mode
 
         self.enable_prior_query = getattr(config, "enable_prior_query", True)
         self.enable_chunk_pooling = getattr(config, "enable_chunk_pooling", False)

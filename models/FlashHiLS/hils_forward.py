@@ -20,7 +20,6 @@ from veomni.distributed.sequence_parallel import slice_position_embedding
 from veomni.utils import logging
 from veomni.utils.seqlen_pos_transform_utils import prepare_fa_kwargs_from_position_ids
 from utils.landmark_utils import insert_special_tokens, create_position_ids_with_landmarks
-from .pope import PolarEmbedReturn
 
 logger = logging.get_logger(__name__)
 
@@ -192,43 +191,6 @@ def hils_model_forward(
     if hsa_rotary_emb is not None:
         hsa_position_embeddings = hsa_rotary_emb(hidden_states, position_ids)
 
-    # --- PoPE embeddings (used by fused LandmarkHSA layers) ---
-    pope_pos_embeddings = None
-    pope_cache_pos_embeddings = None
-    if hasattr(self, 'pop_emb'):
-        pope_pos_ids = position_ids
-        pope_pos_embeddings = self.pop_emb(hidden_states, pope_pos_ids)
-        needs_pope_cache = (
-            use_cache
-            and past_key_values is not None
-            and getattr(self.config, "pope_impl", None) == "naive"
-            and getattr(self.config, "nope_chunkwise_attn", False)
-        )
-        if needs_pope_cache:
-            freqs = pope_pos_embeddings.freqs
-            if freqs.ndim == 2:
-                freqs = freqs.unsqueeze(0)
-
-            cached_freqs = getattr(past_key_values, "_pope_freqs", None)
-            reset_pope_cache = (
-                cached_freqs is None
-                or cache_position is None
-                or cache_position.numel() == 0
-                or int(cache_position[0].item()) == 0
-            )
-            if reset_pope_cache:
-                cached_freqs = freqs.contiguous()
-            else:
-                cached_freqs = torch.cat(
-                    [cached_freqs.to(freqs.device), freqs],
-                    dim=-2,
-                ).contiguous()
-            past_key_values._pope_freqs = cached_freqs
-            pope_cache_pos_embeddings = PolarEmbedReturn(
-                cached_freqs,
-                pope_pos_embeddings.bias,
-            )
-
     sp_group = get_parallel_state().sp_group if get_parallel_state().sp_enabled else None
     position_embeddings = slice_position_embedding(position_embeddings, dim=1, sp_group=sp_group)
     if hsa_position_embeddings is not None:
@@ -237,36 +199,11 @@ def hils_model_forward(
     all_hidden_states = () if output_hidden_states else None
     all_self_attns = () if output_attentions else None
 
-    q_pos = None
-    k_pos = None
-    raw_q_pos = getattr(self, "q_pos", None)
-    raw_k_pos = getattr(self, "k_pos", None)
-    if raw_q_pos is not None and raw_k_pos is not None:
-        # Decoder layers expect intra-chunk positional bias spanning the FULL
-        # head_dim.  Some configs (e.g. olmo with PoPE) only learn the trailing
-        # ``head_dim - pope_dim`` channels and leave the leading ``pope_dim``
-        # channels as zeros (so PoPE owns the rotated front, intra-chunk-pos
-        # owns the un-rotated tail).  Left-pad with zeros to reach head_dim.
-        head_dim = getattr(self, "head_dim", self.config.hidden_size // self.config.num_attention_heads)
-        q_pad = head_dim - raw_q_pos.shape[-1]
-        k_pad = head_dim - raw_k_pos.shape[-1]
-        assert q_pad >= 0 and k_pad >= 0, (
-            f"q_pos/k_pos last-dim ({raw_q_pos.shape[-1]}, "
-            f"{raw_k_pos.shape[-1]}) must be <= head_dim ({head_dim})."
-        )
-        # F.pad on the last dim: (pad_left, pad_right).  We want zeros on the
-        # LEFT, so pad_left=q_pad, pad_right=0.
-        q_pos = F.pad(raw_q_pos, (q_pad, 0)) if q_pad > 0 else raw_q_pos
-        k_pos = F.pad(raw_k_pos, (k_pad, 0)) if k_pad > 0 else raw_k_pos
-
     for layer_idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
         layer_flash_attn_kwargs = flash_attn_kwargs
-        if pope_cache_pos_embeddings is not None and hasattr(decoder_layer.self_attn, "nope_chunkwise_attn"):
-            layer_flash_attn_kwargs = dict(flash_attn_kwargs)
-            layer_flash_attn_kwargs["pope_cache_pos_embeddings"] = pope_cache_pos_embeddings
         layer_position_embeddings = position_embeddings
         if hsa_position_embeddings is not None and getattr(decoder_layer, "use_hsa_rotary_embedding", False):
             layer_position_embeddings = hsa_position_embeddings
@@ -285,8 +222,6 @@ def hils_model_forward(
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=layer_position_embeddings,
-            pope_pos_embeddings=pope_pos_embeddings,
-            chunk_pos_embeddings=[q_pos, k_pos],
             **layer_flash_attn_kwargs,
         )
         hidden_states = layer_outputs[0]

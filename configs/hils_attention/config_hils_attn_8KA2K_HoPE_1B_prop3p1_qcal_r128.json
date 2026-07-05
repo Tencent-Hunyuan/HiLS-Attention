@@ -14,8 +14,6 @@
     "model_type": "qwen_hils",
     "head_dim": 64,
     "num_attention_heads": 32,
-    "hsa_heads": 32,
-    "hsa_qk_ratio": 8,
     "num_hidden_layers": 22,
     "num_key_value_heads": 4,
     "rms_norm_eps": 1e-05,

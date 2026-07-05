@@ -6,8 +6,6 @@ import math
 from .HoPE import HoPERotaryEmbedding
 from torch import nn
 from .hils_attention import HiLSAttention as LandmarkHSA_base
-# from .lhsa_layer_pope_fused import LandmarkHSA as LandmarkHSA_pope
-from .lhsa_layer_pope_naive import LandmarkHSA as LandmarkHSA_naive
 from .configuration_hils import HSAConfig
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache
@@ -44,7 +42,6 @@ from veomni.utils.import_utils import (
 from veomni.models.module_utils import GradientCheckpointingLayer
 from utils.landmark_utils import insert_special_tokens, create_position_ids_with_landmarks
 from .hils_forward import hils_model_forward, hils_causal_lm_forward
-from .pope import PoPERotaryEmbWrapper
 from ops.flex_attn_tilelang import flex_attn_tl
 
 if is_torch_flex_attn_available():
@@ -374,7 +371,6 @@ class Olmo3Attention(nn.Module):
                 attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
 
         kwargs.pop("position_ids", None)
-        kwargs.pop("pope_pos_embeddings", None)
         if not self.mask_lmk_token:
             attn_output, attn_weights = attention_interface(
                 self,
@@ -638,16 +634,8 @@ class HiLSModel(Olmo3PreTrainedModel):
         self.num_swa_layers = getattr(config, "num_swa_layers", 0)
         self.replace_full_attention_with_lhsa = getattr(config, "replace_full_attention_with_lhsa", True)
         self.chunk_size = getattr(config, 'chunk_size', 64)
-        self.use_hsa_alibi = getattr(config, "use_hsa_alibi", False)
-        self.enable_intra_chunk_pos = getattr(config, "enable_intra_chunk_pos", False)
-        # LandmarkHSA = LandmarkHSA_pope if self.use_pope else LandmarkHSA_base
-        lmk_cls = None
-        if self.use_hsa_alibi:
-            from .lhsa_layer_alibi import LandmarkHSA as LandmarkHSA_alibi
-            lmk_cls = LandmarkHSA_alibi
-        else:
-            from .hils_attention import HiLSAttention as LandmarkHSA_base
-            lmk_cls = LandmarkHSA_base
+        from .hils_attention import HiLSAttention as LandmarkHSA_base
+        lmk_cls = LandmarkHSA_base
 
         def layer_type(layer_idx: int):
             if (

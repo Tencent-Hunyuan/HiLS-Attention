@@ -16,7 +16,6 @@
 
 from transformers.configuration_utils import PretrainedConfig, layer_type_validation
 from transformers.modeling_rope_utils import rope_config_validation
-from typing import Literal
 from transformers.utils import logging
 
 
@@ -172,11 +171,9 @@ class HSAConfig(PretrainedConfig):
         attention_dropout=0.0,
         chunk_size=64,
         enable_softmax1=True,
-        hsa_mode: Literal['dense', 'sparse'] = 'sparse',
         hsa_topk: int = 16,
         full_attn_interleave: int = 4,
         num_swa_layers: int = 0,
-        headwise_config=None,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -189,12 +186,10 @@ class HSAConfig(PretrainedConfig):
         self.sliding_window = sliding_window if self.use_sliding_window else None
         self.max_window_layers = max_window_layers
         self.chunk_size = chunk_size
-        self.hsa_mode = hsa_mode
         self.enable_softmax1 = enable_softmax1
         self.hsa_topk = hsa_topk
         self.full_attn_interleave = full_attn_interleave
         self.num_swa_layers = num_swa_layers
-        self.headwise_config = headwise_config
 
         # for backward compatibility
         if num_key_value_heads is None:

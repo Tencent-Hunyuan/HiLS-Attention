@@ -40,7 +40,6 @@ from veomni.utils.import_utils import (
 )
 from veomni.models.module_utils import GradientCheckpointingLayer
 from utils.landmark_utils import insert_special_tokens, create_position_ids_with_landmarks
-from .pope import PoPERotaryEmbWrapper
 from .hils_forward import hils_model_forward, hils_causal_lm_forward
 from ops.flex_attn_tilelang import flex_attn_tl
 
@@ -337,7 +336,6 @@ class Qwen3Attention(nn.Module):
                 attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
 
         kwargs.pop("position_ids", None)
-        kwargs.pop("pope_pos_embeddings", None)
         if not self.mask_lmk_token:
             attn_output, attn_weights = attention_interface(
                 self,
@@ -683,27 +681,8 @@ class HiLSModel(Qwen3PreTrainedModel):
         if self.num_swa_layers > 0 and self.num_swa_layers != config.num_hidden_layers // 2:
             logger.warning_once("Recomment num_swa_layers to be half of num_hidden_layers")
 
-        self.use_pope = getattr(config, "use_pope", False)
-        self.use_hsa_alibi = getattr(config, "use_hsa_alibi", False)
-        self.pope_impl = getattr(config, "pope_impl", "naive") if self.use_pope else None
-        self.enable_intra_chunk_pos = getattr(config, "enable_intra_chunk_pos", False)
-        # LandmarkHSA = LandmarkHSA_pope if self.use_pope else LandmarkHSA_base
-        lmk_cls = None
-        if self.use_pope:
-            assert not self.use_hsa_alibi
-            if self.pope_impl == "naive":
-                from .lhsa_layer_pope_naive import LandmarkHSA as LandmarkHSA_naive
-                lmk_cls = LandmarkHSA_naive
-            elif self.pope_impl == "fused":
-                lmk_cls = LandmarkHSA_pope
-            else:
-                raise ValueError(f"Invalid pope_impl {self.pope_impl}, expected 'naive' or 'fused'.")
-        elif self.use_hsa_alibi:
-            from .lhsa_layer_alibi import LandmarkHSA as LandmarkHSA_alibi
-            lmk_cls = LandmarkHSA_alibi
-        else:
-            from .hils_attention import HiLSAttention as LandmarkHSA_base
-            lmk_cls = LandmarkHSA_base
+        from .hils_attention import HiLSAttention as LandmarkHSA_base
+        lmk_cls = LandmarkHSA_base
 
         def layer_type(layer_idx: int):
             if layer_idx < self.num_swa_layers:
