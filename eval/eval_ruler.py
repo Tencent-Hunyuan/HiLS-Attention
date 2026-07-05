@@ -360,7 +360,7 @@ if __name__ == "__main__":
                      help='Task ID: 0=Single NIAH, 1=Multi Query, 2=Variable Tracking, 3=FWE, 4=PMVL, 5=PCVL')
     cmd.add_argument('--max_seq_len', type=int, default=8192, help='Max sequence length')
     cmd.add_argument('--segment_size', type=int, default=4096, help='Segment size for chunk prefill. Set to 0 or negative to disable chunk prefill (full inference)')
-    cmd.add_argument('--insert_lmk', action='store_true', help='Insert landmark tokens for HSA model')
+    cmd.add_argument('--insert_lmk', action='store_true', help='Insert landmark tokens for HiLS model')
     cmd.add_argument('--max_samples', type=int, default=100, help='Max samples to evaluate')
     cmd.add_argument('--print_every', type=int, default=1, help='Print progress every N samples')
     cmd.add_argument('--verbose', action='store_true', help='Print prediction examples')

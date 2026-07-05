@@ -16,7 +16,7 @@ def _pop_cli_arg(name: str):
     return value
 
 
-_pop_cli_arg("--hsa-config")
+_pop_cli_arg("--hils-config")
 
 HiLSConfig.model_type = "olmo_hils"
 AutoConfig.register("olmo_hils", HiLSConfig)

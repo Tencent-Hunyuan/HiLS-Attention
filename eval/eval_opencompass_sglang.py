@@ -3,8 +3,8 @@
 Usage
 -----
     python eval_opencompass_sglang.py \
-        --hf-path /path/to/hsa_checkpoint \
-        --hsa-config /path/to/config.json \
+        --hf-path /path/to/hils_checkpoint \
+        --hils-config /path/to/config.json \
         --sglang-tp 1 \
         --sglang-page-size 64 \
         --sglang-max-total-tokens 4096 \
@@ -98,7 +98,7 @@ class SGLangModel(BaseModel):
         if attention_backend:
             self._engine_kwargs["attention_backend"] = attention_backend
             self._engine_kwargs["page_size"] = page_size
-            # HSA-specific workarounds
+            # HiLS-specific workarounds
             self._engine_kwargs["disable_cuda_graph"] = True
             self._engine_kwargs["disable_overlap_schedule"] = True
 
@@ -378,7 +378,7 @@ if __name__ == "__main__":
     # ── Parse args ──
 
     hf_path              = _pop_cli_arg("--hf-path")
-    hsa_config           = _pop_cli_arg("--hsa-config")
+    hils_config           = _pop_cli_arg("--hils-config")
     sglang_tp            = int(_pop_cli_arg("--sglang-tp", "1"))
     sglang_page_size     = int(_pop_cli_arg("--sglang-page-size", "64"))
     sglang_max_tokens    = int(_pop_cli_arg("--sglang-max-total-tokens", "4096"))

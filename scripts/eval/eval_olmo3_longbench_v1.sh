@@ -59,7 +59,7 @@ GPU_IDS=(
 #  LongBench v1 settings
 # ============================================================
 MAX_LENGTH=65536                           # middle truncation limit
-VOCAB_DIR=./configs/olmo3_vocab/           # tokenizer for HSA models
+VOCAB_DIR=./configs/olmo3_vocab/           # tokenizer for HiLS models
 DATASETS=""                                # empty = all 21 tasks; or comma-separated, e.g. "hotpotqa,qasper"
 SAVE_ROOT="$SCRIPT_DIR/logs/eval_longbench_v1_$(date +%Y%m%d_%H%M%S)"
 

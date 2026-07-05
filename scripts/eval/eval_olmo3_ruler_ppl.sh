@@ -389,7 +389,7 @@ run_ruler_eval() {
             tp_args+=(--tp_size "$RULER_TP_SIZE")
             cuda_devices=$(IFS=,; echo "${RULER_TP_GPU_IDS[*]}")
             # Under PP (device_map=auto) prefer chunk-prefill: full forward over
-            # 100K+ tokens has a length-dependent HSA retrieval bug, while the
+            # 100K+ tokens has a length-dependent HiLS retrieval bug, while the
             # segmented KV-cache path is correct (and the per-layer cache shards
             # across the PP GPUs). Set RULER_TP_SEGMENT_SIZE<=0 to force the old
             # (broken at long seq) full-forward behavior.
@@ -407,7 +407,7 @@ run_ruler_eval() {
 
         echo "[$(date '+%F %T')] GPU ${cuda_devices} | ${model_name} | RULER task=${task_id} | max_seq_len=${max_seq_len} mode=${mode_label}" | tee -a "$run_log"
 
-        if ! PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}" HSA_DEBUG_NAN="${RULER_HSA_DEBUG_NAN:-0}" CUDA_VISIBLE_DEVICES="$cuda_devices" "$PYTHON_BIN" eval/eval_ruler_hf.py \
+        if ! PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}" HILS_DEBUG_NAN="${RULER_HILS_DEBUG_NAN:-0}" CUDA_VISIBLE_DEVICES="$cuda_devices" "$PYTHON_BIN" eval/eval_ruler_hf.py \
             --config_path "$model_config" \
             --vocab_dir "$VOCAB_DIR" \
             --corpus_path "$RULER_CORPUS_PATH" \

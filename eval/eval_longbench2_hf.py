@@ -48,7 +48,7 @@ set_seed(42)
 # ============================================================
 #  Model loading (aligned with eval_ruler_hf.py)
 # ============================================================
-def resolve_hsa_class(config_path=None, checkpoint_path=None):
+def resolve_hils_class(config_path=None, checkpoint_path=None):
     model_type = ""
     path = config_path or (os.path.join(checkpoint_path, "config.json") if checkpoint_path else None)
     if path and os.path.exists(path):
@@ -64,7 +64,7 @@ def resolve_hsa_class(config_path=None, checkpoint_path=None):
 
 
 def load_model(args, device):
-    HiLSForCausalLM = resolve_hsa_class(args.config_path, args.checkpoint_path)
+    HiLSForCausalLM = resolve_hils_class(args.config_path, args.checkpoint_path)
     AutoConfig.register("olmo_hils", HiLSConfig)
     HiLSForCausalLM.config_class = HiLSConfig
     AutoModelForCausalLM.register(HiLSConfig, HiLSForCausalLM)

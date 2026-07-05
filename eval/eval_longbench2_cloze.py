@@ -17,7 +17,104 @@ Usage:
         --vocab_dir ./configs/olmo3_vocab/ \
         --segment_size 4096 \
         --save_dir results/longbench2_cloze
-\
+"""
+
+import os
+import sys
+import json
+import math
+import argparse
+import random
+import time
+from collections import defaultdict
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from tqdm import tqdm
+from datasets import load_dataset
+import torch.multiprocessing as mp
+from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
+
+
+# ============================================================
+#  Seed
+# ============================================================
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+set_seed(42)
+
+
+# ============================================================
+#  Model loading (aligned with eval_ruler_hf.py)
+# ============================================================
+def resolve_hils_class(config_path=None, checkpoint_path=None):
+    model_type = ""
+    path = config_path or (os.path.join(checkpoint_path, "config.json") if checkpoint_path else None)
+    if path and os.path.exists(path):
+        with open(path, 'r') as f:
+            model_type = json.load(f).get("model_type", "")
+    if "olmo" in model_type:
+        from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
+        print("Using OLMo HiLS implementation")
+    else:
+        from models.FlashHiLS.modeling_qwen_hils import HiLSForCausalLM
+        print("Using Qwen HiLS implementation")
+    return HiLSForCausalLM
+
+
+def _need_hils(config_path=None, checkpoint_path=None):
+    path = config_path or (os.path.join(checkpoint_path, "config.json") if checkpoint_path else None)
+    if path and os.path.exists(path):
+        with open(path, 'r') as f:
+            mt = json.load(f).get("model_type", "")
+        return "hils" in mt
+    return False
+
+
+def load_model(args, device):
+    use_hils = _need_hils(args.config_path, args.checkpoint_path)
+
+    if use_hils:
+        from models.FlashHiLS.configuration_hils import HiLSConfig
+        HiLSForCausalLM = resolve_hils_class(args.config_path, args.checkpoint_path)
+        AutoConfig.register("olmo_hils", HiLSConfig)
+        HiLSForCausalLM.config_class = HiLSConfig
+        AutoModelForCausalLM.register(HiLSConfig, HiLSForCausalLM)
+
+    model_kwargs = {
+        'torch_dtype': torch.bfloat16,
+        'attn_implementation': 'flash_attention_3' if use_hils else 'flash_attention_2',
+        'device_map': device,
+    }
+
+    if args.checkpoint_path:
+        if args.config_path:
+            config = AutoConfig.from_pretrained(args.config_path)
+            model = AutoModelForCausalLM.from_pretrained(
+                args.checkpoint_path, config=config, **model_kwargs
+            )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                args.checkpoint_path, **model_kwargs
+            )
+    else:
+        assert args.config_path is not None, "必须提供 --config_path 或 --checkpoint_path"
+        config = AutoConfig.from_pretrained(args.config_path)
+        model = AutoModelForCausalLM.from_config(config, **model_kwargs).to(device)
+
+    model.eval()
+    return model
+
+
+# ============================================================
+#  Prompt template (base model: no chat template, no system prompt)
+# ============================================================
+TEMPLATE = """\
 {context}
 
 {question}
@@ -353,7 +450,7 @@ if __name__ == "__main__":
     cmd.add_argument('--checkpoint_path', type=str, required=True,
                      help='Path to HF checkpoint')
     cmd.add_argument('--config_path', type=str, default=None,
-                     help='Path to model config (overrides ckpt config, required for HSA models)')
+                     help='Path to model config (overrides ckpt config, required for HiLS models)')
     cmd.add_argument('--vocab_dir', type=str, default=None,
                      help='Path to tokenizer (default: use checkpoint_path)')
 

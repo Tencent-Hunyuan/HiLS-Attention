@@ -32,30 +32,30 @@ def _resolve_model_type(config_path=None, checkpoint_path=None):
     return model_type
 
 
-def resolve_hsa_class(config_path=None, checkpoint_path=None):
+def resolve_hils_class(config_path=None, checkpoint_path=None):
     model_type = _resolve_model_type(config_path, checkpoint_path)
-    if "hils" in model_type or "hsa" in model_type:
+    if "hils" in model_type:
         if "olmo" in model_type:
             from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
             return HiLSForCausalLM, model_type
         if "qwen" in model_type:
             from models.FlashHiLS.modeling_qwen_hils import HiLSForCausalLM
             return HiLSForCausalLM, model_type
-        # Generic HSA fallback (legacy): qwen-based HiLSForCausalLM under the
+        # Generic HiLS fallback (legacy): qwen-based HiLSForCausalLM under the
         # literal "qwen_hils" tag.
         from models.FlashHiLS.modeling_qwen_hils import HiLSForCausalLM
         return HiLSForCausalLM, model_type or "qwen_hils"
-    # Non-HSA checkpoint (e.g. stock Olmo3 "olmo3", plain Qwen, etc.).
-    # Transformers' builtin AutoModel classes handle it; no HSA registration
-    # needed. Return None to signal "skip HSA registration".
+    # Non-HiLS checkpoint (e.g. stock Olmo3 "olmo3", plain Qwen, etc.).
+    # Transformers' builtin AutoModel classes handle it; no HiLS registration
+    # needed. Return None to signal "skip HiLS registration".
     return None, None
 
 
-hsa_config_path = _pop_cli_arg("--hsa-config")
+hils_config_path = _pop_cli_arg("--hils-config")
 hf_path = _peek_cli_arg("--hf-path")
-_hsa_resolved = resolve_hsa_class(hsa_config_path, hf_path)
-if _hsa_resolved[0] is not None:
-    HiLSForCausalLM, model_type = _hsa_resolved
+_hils_resolved = resolve_hils_class(hils_config_path, hf_path)
+if _hils_resolved[0] is not None:
+    HiLSForCausalLM, model_type = _hils_resolved
 
 
     class OpenCompassHiLSConfig(HiLSConfig):

@@ -49,7 +49,7 @@ MODEL_NAMES=(
     lmk_token_tuning
     olmo3_8KA2K_HoPE_LoRA_step13000
 )
-HSA_CONFIGS=(
+HILS_CONFIGS=(
     $lmk_token_tuning_config
     $olmo3_8KA2K_HoPE_LoRA_config
 )
@@ -62,7 +62,7 @@ MAX_PREFETCH_RETRIES=0
 PREFETCH_OK=0
 for i in $(seq 1 $MAX_PREFETCH_RETRIES); do
     echo "[Prefetch] Attempt $i/$MAX_PREFETCH_RETRIES ..."
-    if python code_exp/prefetch.py ${HSA_CONFIGS[0]}; then
+    if python code_exp/prefetch.py ${HILS_CONFIGS[0]}; then
         echo "[Prefetch] Success on attempt $i."
         PREFETCH_OK=1
         break
@@ -111,9 +111,9 @@ LOCAL_STAGE_DIR=${LOCAL_STAGE_DIR:-}
 WARMUP_PAGE_CACHE=${WARMUP_PAGE_CACHE:-}
 
 # ── Validation ──
-if [ "${#MODEL_NAMES[@]}" -ne "${#HSA_CONFIGS[@]}" ] || \
+if [ "${#MODEL_NAMES[@]}" -ne "${#HILS_CONFIGS[@]}" ] || \
    [ "${#MODEL_NAMES[@]}" -ne "${#HF_PATHS[@]}" ]; then
-    echo "MODEL_NAMES / HSA_CONFIGS / HF_PATHS length mismatch" >&2; exit 1
+    echo "MODEL_NAMES / HILS_CONFIGS / HF_PATHS length mismatch" >&2; exit 1
 fi
 
 if [ "${#GPU_IDS[@]}" -eq 0 ]; then
@@ -161,7 +161,7 @@ echo "=============================================="
 
 # ── Prepare resolved HF path (symlink weights + tokenizer + write config.json) ──
 prepare_hf_path() {
-    local hf_path="$1" hsa_config="$2" resolved_hf_path="$3"
+    local hf_path="$1" hils_config="$2" resolved_hf_path="$3"
     rm -rf "$resolved_hf_path"
     mkdir -p "$resolved_hf_path"
 
@@ -181,13 +181,13 @@ prepare_hf_path() {
     done
     shopt -u nullglob dotglob
 
-    "$PYTHON_BIN" - "$hf_path" "$hsa_config" "$TOKENIZER_PATH" "$resolved_hf_path/config.json" <<'PYEOF'
+    "$PYTHON_BIN" - "$hf_path" "$hils_config" "$TOKENIZER_PATH" "$resolved_hf_path/config.json" <<'PYEOF'
 import json, os, sys
 
-hf_dir, hsa_path, tokenizer_dir, dst_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+hf_dir, hils_path, tokenizer_dir, dst_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 
-with open(hsa_path, "r", encoding="utf-8") as f:
-    hsa = json.load(f)
+with open(hils_path, "r", encoding="utf-8") as f:
+    hils = json.load(f)
 
 def detect_tokenizer_vocab_size(tokenizer_dir, default):
     p = os.path.join(tokenizer_dir, "vocab.json")
@@ -201,18 +201,18 @@ def detect_tokenizer_vocab_size(tokenizer_dir, default):
         if v: return len(v)
     return int(default)
 
-# Always build config from the requested hsa_config (e.g. config_hf.json for
+# Always build config from the requested hils_config (e.g. config_hf.json for
 # Olmo3ForCausalLM), optionally overlay checkpoint-only fields we still need.
 base_cfg_path = os.path.join(hf_dir, "config.json")
 if os.path.exists(base_cfg_path):
     with open(base_cfg_path, "r", encoding="utf-8") as f:
         base = json.load(f)
-    config = dict(hsa)
+    config = dict(hils)
     for key in ("torch_dtype", "transformers_version"):
         if key in base and key not in config:
             config[key] = base[key]
 else:
-    config = dict(hsa)
+    config = dict(hils)
 
 config["insert_landmarks"] = bool(config.get("insert_landmarks") or config.get("adjust_lmk_pos"))
 config["adjust_lmk_pos"]   = bool(config.get("adjust_lmk_pos", False))
@@ -225,7 +225,7 @@ with open(dst_path, "w", encoding="utf-8") as f:
     json.dump(config, f, ensure_ascii=False, indent=2); f.write("\n")
 print(f"[config] model_type={config.get('model_type')}, arch={config.get('architectures')}, "
       f"vocab_size={config.get('vocab_size')}, insert_lmk={config['insert_landmarks']}, "
-      f"adjust_lmk_pos={config['adjust_lmk_pos']}, hsa_config={hsa_path}")
+      f"adjust_lmk_pos={config['adjust_lmk_pos']}, hils_config={hils_path}")
 PYEOF
 }
 
@@ -388,7 +388,7 @@ drain_all() { while [ "${#active_pids[@]}" -gt 0 ]; do reap_one_job; done; }
 
 # ── Single (model, dataset) evaluation ──
 run_one() {
-    local gpu_group="$1" model_name="$2" hsa_config="$3" hf_path="$4" dataset="$5" work_dir="$6"
+    local gpu_group="$1" model_name="$2" hils_config="$3" hf_path="$4" dataset="$5" work_dir="$6"
     local resolved_hf_path="$work_dir/hf_with_tokenizer"
     local run_log="$work_dir/run.log"
 
@@ -398,14 +398,14 @@ run_one() {
     IFS=',' read -r -a gpu_list <<< "$gpu_group"
     local num_gpus="${#gpu_list[@]}"
 
-    prepare_hf_path "$hf_path" "$hsa_config" "$resolved_hf_path" 2>&1 | tee -a "$run_log"
+    prepare_hf_path "$hf_path" "$hils_config" "$resolved_hf_path" 2>&1 | tee -a "$run_log"
 
     local cmd=(
         "$PYTHON_BIN" eval/eval_opencompass.py
         --datasets "$dataset"
         --hf-type base
         --hf-path "$resolved_hf_path"
-        --hsa-config "$hsa_config"
+        --hils-config "$hils_config"
         --batch-size "$BATCH_SIZE"
         --max-out-len "$MAX_OUT_LEN"
         --max-num-workers "$num_gpus"
@@ -416,7 +416,7 @@ run_one() {
 
     # Pass insert_landmarks via model kwargs, matching eval_olmo3_opencompass_all3.sh
     local insert_lmk
-    insert_lmk=$("$PYTHON_BIN" -c "import json,sys;c=json.load(open(sys.argv[1]));print('1' if c.get('insert_landmarks') or c.get('adjust_lmk_pos') else '0')" "$hsa_config")
+    insert_lmk=$("$PYTHON_BIN" -c "import json,sys;c=json.load(open(sys.argv[1]));print('1' if c.get('insert_landmarks') or c.get('adjust_lmk_pos') else '0')" "$hils_config")
 
     cmd+=(--model-kwargs torch_dtype=torch.bfloat16 attn_implementation=flash_attention_3)
     [ "$insert_lmk" = "1" ] && cmd+=(auto_insert_lmk=True)
@@ -430,7 +430,7 @@ run_one() {
         echo "[$(date '+%F %T')] Start: model=${model_name}, dataset=${dataset}, gpus=${gpu_group} (shards=${num_gpus})"
         echo "[$(date '+%F %T')] Work dir: ${work_dir}"
         echo "[$(date '+%F %T')] HF path:  ${hf_path}"
-        echo "[$(date '+%F %T')] Config:   ${hsa_config}"
+        echo "[$(date '+%F %T')] Config:   ${hils_config}"
         echo "[$(date '+%F %T')] Batch:    ${BATCH_SIZE}  MaxOut: ${MAX_OUT_LEN}  MaxSeq: ${MAX_SEQ_LEN:-<model default>}"
         echo "[$(date '+%F %T')] Command:  CUDA_VISIBLE_DEVICES=${gpu_group} ${cmd[*]}"
     } | tee -a "$run_log"
@@ -491,7 +491,7 @@ warmup_weights() {
 
 for model_idx in "${!MODEL_NAMES[@]}"; do
     model_name="${MODEL_NAMES[$model_idx]}"
-    hsa_config="${HSA_CONFIGS[$model_idx]}"
+    hils_config="${HILS_CONFIGS[$model_idx]}"
     hf_path="${HF_PATHS[$model_idx]}"
     model_log_dir="$MASTER_LOG_DIR/$model_name"
     mkdir -p "$model_log_dir"
@@ -523,7 +523,7 @@ for model_idx in "${!MODEL_NAMES[@]}"; do
         echo "[$(date '+%F %T')] Launch: model=${model_name}, dataset=${dataset}, gpus=${gpu_group}" \
             | tee -a "$MASTER_LOG_DIR/queue.log"
 
-        run_one "$gpu_group" "$model_name" "$hsa_config" "$effective_hf_path" "$dataset" "$work_dir" &
+        run_one "$gpu_group" "$model_name" "$hils_config" "$effective_hf_path" "$dataset" "$work_dir" &
         active_pids+=($!); active_gpu_groups+=("$gpu_group"); active_labels+=("${model_name}/${dataset}")
     done
 done

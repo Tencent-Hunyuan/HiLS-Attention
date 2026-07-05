@@ -9,7 +9,7 @@ Reports results split by 'length' field: short / medium / long.
 
 Supports both:
   - Standard HF models (e.g. Olmo-3-7B-Instruct-SFT)
-  - HSA models with custom config (e.g. olmo3_hils_innerx)
+  - HiLS models with custom config (e.g. olmo3_hils_innerx)
 
 Usage:
     python eval/eval_longbench2_direct.py \
@@ -52,7 +52,7 @@ set_seed(42)
 # ============================================================
 #  Model loading (aligned with eval_ruler_hf.py / eval_longbench2_hf.py)
 # ============================================================
-def resolve_hsa_class(config_path=None, checkpoint_path=None):
+def resolve_hils_class(config_path=None, checkpoint_path=None):
     model_type = ""
     path = config_path or (os.path.join(checkpoint_path, "config.json") if checkpoint_path else None)
     if path and os.path.exists(path):
@@ -67,20 +67,20 @@ def resolve_hsa_class(config_path=None, checkpoint_path=None):
     return HiLSForCausalLM
 
 
-def _need_hsa(config_path=None, checkpoint_path=None):
-    """Check if the model is an HSA model (has qwen_hils / olmo_hils model_type)."""
+def _need_hils(config_path=None, checkpoint_path=None):
+    """Check if the model is a HiLS model (has qwen_hils / olmo_hils model_type)."""
     path = config_path or (os.path.join(checkpoint_path, "config.json") if checkpoint_path else None)
     if path and os.path.exists(path):
         with open(path, 'r') as f:
             mt = json.load(f).get("model_type", "")
-        return "hsa" in mt or "hils" in mt
+        return "hils" in mt
     return False
 
 
 def load_model(args, device):
     """
     Unified model loading:
-      - If config_path points to an HSA config → register HSA class, load with config override
+      - If config_path points to a HiLS config -> register HiLS class, load with config override
       - Otherwise → standard AutoModelForCausalLM.from_pretrained
 \
 Document:
@@ -432,7 +432,7 @@ if __name__ == "__main__":
     cmd.add_argument('--checkpoint_path', type=str, required=True,
                      help='Path to HF checkpoint')
     cmd.add_argument('--config_path', type=str, default=None,
-                     help='Path to model config (overrides ckpt config, required for HSA models)')
+                     help='Path to model config (overrides ckpt config, required for HiLS models)')
     cmd.add_argument('--vocab_dir', type=str, default=None,
                      help='Path to tokenizer (default: use checkpoint_path)')
 

@@ -6,7 +6,7 @@ using task-specific metrics (F1, ROUGE-L, classification accuracy, etc.)
 
 Supports:
   - Standard HF models (Olmo, Llama, etc.)
-  - HSA models with custom config
+  - HiLS models with custom config
 
 Usage:
     python eval/eval_longbench_v1.py \
@@ -16,7 +16,311 @@ Usage:
         --segment_size 4096 \
         --save_dir results/longbench_v1 \
         --n_proc 1
-Truncate from the middle, preserving head and tail, as per LongBench paper."""
+"""
+
+import os
+import sys
+import json
+import math
+import argparse
+import random
+import re
+import string
+import time
+from collections import Counter, defaultdict
+
+import numpy as np
+import torch
+import torch.multiprocessing as mp
+from tqdm import tqdm
+from datasets import load_dataset
+from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
+
+# Optional deps for metrics
+try:
+    import jieba
+except ImportError:
+    jieba = None
+try:
+    from fuzzywuzzy import fuzz
+except ImportError:
+    fuzz = None
+try:
+    from rouge import Rouge
+except ImportError:
+    Rouge = None
+
+
+# ============================================================
+#  Seed
+# ============================================================
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+set_seed(42)
+
+
+# ============================================================
+#  Model loading (aligned with eval_ruler_hf.py)
+# ============================================================
+def resolve_hils_class(config_path=None, checkpoint_path=None):
+    model_type = ""
+    path = config_path or (os.path.join(checkpoint_path, "config.json") if checkpoint_path else None)
+    if path and os.path.exists(path):
+        with open(path, 'r') as f:
+            model_type = json.load(f).get("model_type", "")
+    if "olmo" in model_type:
+        from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
+        print("Using OLMo HiLS implementation")
+    else:
+        from models.FlashHiLS.modeling_qwen_hils import HiLSForCausalLM
+        print("Using Qwen HiLS implementation")
+    return HiLSForCausalLM
+
+
+def _need_hils(config_path=None, checkpoint_path=None):
+    path = config_path or (os.path.join(checkpoint_path, "config.json") if checkpoint_path else None)
+    if path and os.path.exists(path):
+        with open(path, 'r') as f:
+            mt = json.load(f).get("model_type", "")
+        return "hils" in mt
+    return False
+
+
+def load_model(args, device):
+    use_hils = _need_hils(args.config_path, args.checkpoint_path)
+
+    if use_hils:
+        from models.FlashHiLS.configuration_hils import HiLSConfig
+        HiLSForCausalLM = resolve_hils_class(args.config_path, args.checkpoint_path)
+        AutoConfig.register("olmo_hils", HiLSConfig)
+        HiLSForCausalLM.config_class = HiLSConfig
+        AutoModelForCausalLM.register(HiLSConfig, HiLSForCausalLM)
+
+    model_kwargs = {
+        'torch_dtype': torch.bfloat16,
+        'attn_implementation': 'flash_attention_3' if use_hils else 'flash_attention_2',
+        'device_map': device,
+        'trust_remote_code': True,
+    }
+
+    if args.checkpoint_path:
+        if args.config_path:
+            config = AutoConfig.from_pretrained(args.config_path)
+            model = AutoModelForCausalLM.from_pretrained(
+                args.checkpoint_path, config=config, **model_kwargs
+            )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                args.checkpoint_path, **model_kwargs
+            )
+    else:
+        assert args.config_path is not None, "必须提供 --config_path 或 --checkpoint_path"
+        config = AutoConfig.from_pretrained(args.config_path)
+        model = AutoModelForCausalLM.from_config(config, **model_kwargs).to(device)
+
+    model.eval()
+    return model
+
+
+# ============================================================
+#  LongBench v1 prompt templates & max generation lengths
+# ============================================================
+DATASET2PROMPT = {
+    "narrativeqa": "You are given a story, which can be either a novel or a movie script, and a question. Answer the question asconcisely as you can, using a single phrase if possible. Do not provide any explanation.\n\nStory: {context}\n\nNow, answer the question based on the story asconcisely as you can, using a single phrase if possible. Do not provide any explanation.\n\nQuestion: {input}\n\nAnswer:",
+    "qasper": "You are given a scientific article and a question. Answer the question as concisely as you can, using a single phrase or sentence if possible. If the question cannot be answered based on the information in the article, write \"unanswerable\". If the question is a yes/no question, answer \"yes\", \"no\", or \"unanswerable\". Do not provide any explanation.\n\nArticle: {context}\n\n Answer the question based on the above article as concisely as you can, using a single phrase or sentence if possible. If the question cannot be answered based on the information in the article, write \"unanswerable\". If the question is a yes/no question, answer \"yes\", \"no\", or \"unanswerable\". Do not provide any explanation.\n\nQuestion: {input}\n\nAnswer:",
+    "multifieldqa_en": "Read the following text and answer briefly.\n\n{context}\n\nNow, answer the following question based on the above text, only give me the answer and do not output any other words.\n\nQuestion: {input}\nAnswer:",
+    "multifieldqa_zh": "阅读以下文字并用中文简短回答：\n\n{context}\n\n现在请基于上面的文章回答下面的问题，只告诉我答案，不要输出任何其他字词。\n\n问题：{input}\n回答：",
+    "hotpotqa": "Answer the question based on the given passages. Only give me the answer and do not output any other words.\n\nThe following are given passages.\n{context}\n\nAnswer the question based on the given passages. Only give me the answer and do not output any other words.\n\nQuestion: {input}\nAnswer:",
+    "2wikimqa": "Answer the question based on the given passages. Only give me the answer and do not output any other words.\n\nThe following are given passages.\n{context}\n\nAnswer the question based on the given passages. Only give me the answer and do not output any other words.\n\nQuestion: {input}\nAnswer:",
+    "musique": "Answer the question based on the given passages. Only give me the answer and do not output any other words.\n\nThe following are given passages.\n{context}\n\nAnswer the question based on the given passages. Only give me the answer and do not output any other words.\n\nQuestion: {input}\nAnswer:",
+    "dureader": "请基于给定的文章回答下述问题。\n\n文章：{context}\n\n请基于上述文章回答下面的问题。\n\n问题：{input}\n回答：",
+    "gov_report": "You are given a report by a government agency. Write a one-page summary of the report.\n\nReport:\n{context}\n\nNow, write a one-page summary of the report.\n\nSummary:",
+    "qmsum": "You are given a meeting transcript and a query containing a question or instruction. Answer the query in one or more sentences.\n\nTranscript:\n{context}\n\nNow, answer the query based on the above meeting transcript in one or more sentences.\n\nQuery: {input}\nAnswer:",
+    "multi_news": "You are given several news passages. Write a one-page summary of all news. \n\nNews:\n{context}\n\nNow, write a one-page summary of all the news.\n\nSummary:",
+    "vcsum": "下面有一段会议记录，请你阅读后，写一段总结，总结会议的内容。\n会议记录：\n{context}\n\n会议总结：",
+    "trec": "Please determine the type of the question below. Here are some examples of questions.\n\n{context}\n{input}",
+    "triviaqa": "Answer the question based on the given passage. Only give me the answer and do not output any other words. The following are some examples.\n\n{context}\n\n{input}",
+    "samsum": "Summarize the dialogue into a few short sentences. The following are some examples.\n\n{context}\n\n{input}",
+    "lsht": "请判断给定新闻的类别，下面是一些例子。\n\n{context}\n{input}",
+    "passage_count": "There are some paragraphs below sourced from Wikipedia. Some of them may be duplicates. Please carefully read these paragraphs and determine how many unique paragraphs there are after removing duplicates. In other words, how many non-repeating paragraphs are there in total?\n\n{context}\n\nPlease enter the final count of unique paragraphs after removing duplicates. The output format should only contain the number, such as 1, 2, 3, and so on.\n\nThe final answer is: ",
+    "passage_retrieval_en": "Here are 30 paragraphs from Wikipedia, along with an abstract. Please determine which paragraph the abstract is from.\n\n{context}\n\nThe following is an abstract.\n\n{input}\n\nPlease enter the number of the paragraph that the abstract is from. The answer format must be like \"Paragraph 1\", \"Paragraph 2\", etc.\n\nThe answer is: ",
+    "passage_retrieval_zh": "以下是若干段落文字，以及其中一个段落的摘要。请确定给定的摘要出自哪一段。\n\n{context}\n\n下面是一个摘要\n\n{input}\n\n请输入摘要所属段落的编号。答案格式必须是\"段落1\"，\"段落2\"等格式\n\n答案是：",
+    "lcc": "Please complete the code given below. \n{context}Next line of code:\n",
+    "repobench-p": "Please complete the code given below. \n{context}{input}Next line of code:\n",
+}
+
+DATASET2MAXGEN = {
+    "narrativeqa": 128, "qasper": 128, "multifieldqa_en": 64, "multifieldqa_zh": 64,
+    "hotpotqa": 32, "2wikimqa": 32, "musique": 32, "dureader": 128,
+    "gov_report": 512, "qmsum": 512, "multi_news": 512, "vcsum": 512,
+    "trec": 64, "triviaqa": 32, "samsum": 128, "lsht": 64,
+    "passage_count": 32, "passage_retrieval_en": 32, "passage_retrieval_zh": 32,
+    "lcc": 64, "repobench-p": 64,
+}
+
+ALL_DATASETS = [
+    "narrativeqa", "qasper", "multifieldqa_en", "multifieldqa_zh",
+    "hotpotqa", "2wikimqa", "musique", "dureader",
+    "gov_report", "qmsum", "multi_news", "vcsum",
+    "trec", "triviaqa", "samsum", "lsht",
+    "passage_count", "passage_retrieval_en", "passage_retrieval_zh",
+    "lcc", "repobench-p",
+]
+
+# Task categories for reporting
+TASK_CATEGORIES = {
+    "Single-Doc QA": ["narrativeqa", "qasper", "multifieldqa_en", "multifieldqa_zh"],
+    "Multi-Doc QA": ["hotpotqa", "2wikimqa", "musique", "dureader"],
+    "Summarization": ["gov_report", "qmsum", "multi_news", "vcsum"],
+    "Few-shot": ["trec", "triviaqa", "samsum", "lsht"],
+    "Synthetic": ["passage_count", "passage_retrieval_en", "passage_retrieval_zh"],
+    "Code": ["lcc", "repobench-p"],
+}
+
+
+# ============================================================
+#  Metrics (from official LongBench metrics.py)
+# ============================================================
+def normalize_answer(s):
+    def remove_articles(text):
+        return re.sub(r"\b(a|an|the)\b", " ", text)
+    def white_space_fix(text):
+        return " ".join(text.split())
+    def remove_punc(text):
+        return "".join(ch for ch in text if ch not in set(string.punctuation))
+    def lower(text):
+        return text.lower()
+    return white_space_fix(remove_articles(remove_punc(lower(s))))
+
+
+def normalize_zh_answer(s):
+    def white_space_fix(text):
+        return "".join(text.split())
+    def remove_punc(text):
+        cn_punctuation = "！？｡。＂＃＄％＆＇（）＊＋，－／：；＜＝＞＠［＼］＾＿｀｛｜｝～｟｠｢｣､、〃》「」『』【】〔〕〖〗〘〙〚〛〜〝〞〟〰〾〿–—''‛""„‟…‧﹏."
+        all_punctuation = set(string.punctuation + cn_punctuation)
+        return "".join(ch for ch in text if ch not in all_punctuation)
+    def lower(text):
+        return text.lower()
+    return white_space_fix(remove_punc(lower(s)))
+
+
+def _f1_score(prediction, ground_truth):
+    common = Counter(prediction) & Counter(ground_truth)
+    num_same = sum(common.values())
+    if num_same == 0:
+        return 0
+    precision = 1.0 * num_same / len(prediction)
+    recall = 1.0 * num_same / len(ground_truth)
+    return (2 * precision * recall) / (precision + recall)
+
+
+def qa_f1_score(prediction, ground_truth, **kwargs):
+    pred_tokens = normalize_answer(prediction).split()
+    gt_tokens = normalize_answer(ground_truth).split()
+    return _f1_score(pred_tokens, gt_tokens)
+
+
+def qa_f1_zh_score(prediction, ground_truth, **kwargs):
+    assert jieba is not None, "pip install jieba"
+    pred_tokens = [normalize_zh_answer(t) for t in jieba.cut(prediction, cut_all=False)]
+    gt_tokens = [normalize_zh_answer(t) for t in jieba.cut(ground_truth, cut_all=False)]
+    pred_tokens = [t for t in pred_tokens if len(t) > 0]
+    gt_tokens = [t for t in gt_tokens if len(t) > 0]
+    return _f1_score(pred_tokens, gt_tokens)
+
+
+def rouge_score(prediction, ground_truth, **kwargs):
+    assert Rouge is not None, "pip install rouge"
+    rouge = Rouge()
+    try:
+        scores = rouge.get_scores([prediction], [ground_truth], avg=True)
+    except Exception:
+        return 0.0
+    return scores["rouge-l"]["f"]
+
+
+def rouge_zh_score(prediction, ground_truth, **kwargs):
+    assert jieba is not None, "pip install jieba"
+    prediction = " ".join(list(jieba.cut(prediction, cut_all=False)))
+    ground_truth = " ".join(list(jieba.cut(ground_truth, cut_all=False)))
+    return rouge_score(prediction, ground_truth)
+
+
+def classification_score(prediction, ground_truth, **kwargs):
+    all_classes = kwargs["all_classes"]
+    em_match_list = []
+    for class_name in all_classes:
+        if class_name in prediction:
+            em_match_list.append(class_name)
+    for match_term in list(em_match_list):
+        if match_term in ground_truth and match_term != ground_truth:
+            em_match_list.remove(match_term)
+    if ground_truth in em_match_list:
+        return 1.0 / len(em_match_list)
+    return 0.0
+
+
+def retrieval_score(prediction, ground_truth, **kwargs):
+    pattern = r'Paragraph (\d+)'
+    matches = re.findall(pattern, ground_truth)
+    ground_truth_id = matches[0]
+    numbers = re.findall(r"\d+", prediction)
+    right_num = sum(1 for n in numbers if str(n) == str(ground_truth_id))
+    return 0.0 if len(numbers) == 0 else right_num / len(numbers)
+
+
+def retrieval_zh_score(prediction, ground_truth, **kwargs):
+    pattern = r'段落(\d+)'
+    matches = re.findall(pattern, ground_truth)
+    ground_truth_id = matches[0]
+    numbers = re.findall(r"\d+", prediction)
+    right_num = sum(1 for n in numbers if str(n) == str(ground_truth_id))
+    return 0.0 if len(numbers) == 0 else right_num / len(numbers)
+
+
+def count_score(prediction, ground_truth, **kwargs):
+    numbers = re.findall(r"\d+", prediction)
+    right_num = sum(1 for n in numbers if str(n) == str(ground_truth))
+    return 0.0 if len(numbers) == 0 else right_num / len(numbers)
+
+
+def code_sim_score(prediction, ground_truth, **kwargs):
+    assert fuzz is not None, "pip install fuzzywuzzy"
+    all_lines = prediction.lstrip('\n').split('\n')
+    prediction = ""
+    for line in all_lines:
+        if ('`' not in line) and ('#' not in line) and ('//' not in line):
+            prediction = line
+            break
+    return fuzz.ratio(prediction, ground_truth) / 100
+
+
+DATASET2METRIC = {
+    "narrativeqa": qa_f1_score, "qasper": qa_f1_score,
+    "multifieldqa_en": qa_f1_score, "multifieldqa_zh": qa_f1_zh_score,
+    "hotpotqa": qa_f1_score, "2wikimqa": qa_f1_score,
+    "musique": qa_f1_score, "dureader": rouge_zh_score,
+    "gov_report": rouge_score, "qmsum": rouge_score,
+    "multi_news": rouge_score, "vcsum": rouge_zh_score,
+    "trec": classification_score, "triviaqa": qa_f1_score,
+    "samsum": rouge_score, "lsht": classification_score,
+    "passage_retrieval_en": retrieval_score,
+    "passage_count": count_score,
+    "passage_retrieval_zh": retrieval_zh_score,
+    "lcc": code_sim_score, "repobench-p": code_sim_score,
+}
+
+
+# ============================================================
+#  Truncation: middle truncation (keep head + tail)
+# ============================================================
+def truncate_middle(tokenizer, prompt, max_length):
+    """Truncate from the middle, preserving head and tail, as per LongBench paper."""
     tokenized = tokenizer(prompt, truncation=False, return_tensors="pt").input_ids[0]
     if len(tokenized) <= max_length:
         return prompt
@@ -71,6 +375,7 @@ def predict_dataset(model, tokenizer, data, dataset_name, max_length,
 
         pred = tokenizer.decode(output[context_length:], skip_special_tokens=True)
 
+        # 清理 generate 状态和 KV cache，释放显存
         if hasattr(model, '_gen_state'):
             model._gen_state.reset()
         torch.cuda.empty_cache()
@@ -420,7 +725,7 @@ if __name__ == "__main__":
     cmd.add_argument('--checkpoint_path', type=str, required=True,
                      help='Path to HF checkpoint')
     cmd.add_argument('--config_path', type=str, default=None,
-                     help='Path to model config (overrides ckpt config, required for HSA models)')
+                     help='Path to model config (overrides ckpt config, required for HiLS models)')
     cmd.add_argument('--vocab_dir', type=str, default=None,
                      help='Path to tokenizer (default: use checkpoint_path)')
 

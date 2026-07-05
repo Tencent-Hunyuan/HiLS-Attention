@@ -61,7 +61,7 @@ def is_hils_model(config_path=None, checkpoint_path=None):
     return "hils" in read_model_type(config_path, checkpoint_path)
 
 
-def load_hsa_config(config_path):
+def load_hils_config(config_path):
     from models.FlashHiLS.configuration_hils import HiLSConfig
 
     with open(config_path, "r", encoding="utf-8") as fin:
@@ -70,7 +70,7 @@ def load_hsa_config(config_path):
 
 def load_eval_config(config_path, checkpoint_path=None):
     if is_hils_model(config_path, checkpoint_path):
-        return load_hsa_config(config_path)
+        return load_hils_config(config_path)
     return AutoConfig.from_pretrained(config_path, trust_remote_code=True)
 
 
@@ -86,7 +86,7 @@ def _register_with_exist_ok(register_fn, *args):
         pass
 
 
-def register_hsa_model(config_path=None, checkpoint_path=None):
+def register_hils_model(config_path=None, checkpoint_path=None):
     model_type = read_model_type(config_path, checkpoint_path)
     if "hils" not in model_type:
         return
@@ -276,7 +276,7 @@ def build_eval_model(args, device, tp_size=1, use_hf_tp=False, use_veomni_tp=Fal
     if should_use_hf_loader(args):
         if not args.checkpoint_path:
             raise ValueError("--checkpoint_path is required when loading HF causal LM")
-        register_hsa_model(args.config_path, args.checkpoint_path)
+        register_hils_model(args.config_path, args.checkpoint_path)
         hf_kwargs = {
             "torch_dtype": torch.bfloat16,
             "trust_remote_code": True,
@@ -423,7 +423,7 @@ def forward_chunk_prefill_logits(
     insert_lmk=False,
     orig_seq_len=None,
     chunk_size=64,
-    skip_hsa_prefill=False,
+    skip_hils_prefill=False,
 ):
     """Segmented chunk prefill (same path as eval_ruler_hf / test_ruler_chunk_prefill_consistency)."""
     seq_len = input_ids.shape[1]
@@ -464,8 +464,8 @@ def forward_chunk_prefill_logits(
             seg_logits_to_keep = end_idx - start_idx if seg_idx >= first_answer_segment else 1
 
             extra_kwargs = {}
-            if skip_hsa_prefill and seg_idx < first_answer_segment - 1:
-                extra_kwargs["skip_hsa"] = True
+            if skip_hils_prefill and seg_idx < first_answer_segment - 1:
+                extra_kwargs["skip_hils"] = True
 
             out = model(
                 input_ids=seg_input_ids,
@@ -545,7 +545,7 @@ def run_ppl_forward(
             insert_lmk=args.insert_lmk,
             orig_seq_len=batch["orig_seq_len"],
             chunk_size=args.chunk_size,
-            skip_hsa_prefill=args.skip_hsa_prefill,
+            skip_hils_prefill=args.skip_hils_prefill,
         )
     else:
         logits = forward_full_logits(
@@ -674,9 +674,9 @@ if __name__ == "__main__":
     cmd.add_argument("--adjust_lmk_pos", action="store_true")
     cmd.add_argument("--use_hf_model", action="store_true")
     cmd.add_argument(
-        "--skip_hsa_prefill",
+        "--skip_hils_prefill",
         action="store_true",
-        help="Skip HSA layers on non-answer segments during chunk prefill",
+        help="Skip HiLS layers on non-answer segments during chunk prefill",
     )
     cmd.add_argument(
         "--attn_implementation",
