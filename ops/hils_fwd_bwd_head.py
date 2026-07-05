@@ -956,68 +956,6 @@ def HSA_block_M_head(
     )
 
 
-def HSA_block_M_head_intra_additive_pos(
-    q, k, v, weights, indices,
-    q_pos_emb=None, k_pos_emb=None,
-    block_size=64, sm_scale=None, block_M=None, mask_last_token=True,
-    dtype="bfloat16", accum_dtype="float",
-    num_threads=None, num_threads_fwd=None, num_threads_bwd=None,
-    is_training=True,
-):
-    """HSA wrapper with optional additive intra-chunk position embeddings on q/k."""
-    if q_pos_emb is not None or k_pos_emb is not None:
-        assert q_pos_emb is not None and k_pos_emb is not None, "q_pos_emb and k_pos_emb must be both None or both provided"
-        from ops.rope_tilelang_fp32 import hsa_intra_additive_pos_autograd
-        q, k = hsa_intra_additive_pos_autograd(q, k, q_pos_emb, k_pos_emb)
-    return HSA_block_M_head(
-        q, k, v, weights, indices,
-        block_size=block_size, sm_scale=sm_scale, block_M=block_M,
-        mask_last_token=mask_last_token, dtype=dtype, accum_dtype=accum_dtype,
-        num_threads=num_threads, num_threads_fwd=num_threads_fwd, num_threads_bwd=num_threads_bwd,
-        is_training=is_training,
-    )
-
-
-def main_intra_additive_pos_smoke(B=1, SEQ_LEN=256, H=1, HQ=8, D=64, S=4,
-                                  block_size=64, block_M=4, mask_last_token=True):
-    """Smoke test for additive intra-chunk position embeddings."""
-    device = "cuda"
-    dtype = torch.bfloat16
-    torch.manual_seed(0)
-    scale = 1.0 / math.sqrt(D)
-
-    Q = torch.randn(B, SEQ_LEN, HQ, D, device=device, dtype=dtype, requires_grad=True)
-    K = torch.randn(B, SEQ_LEN, H, D, device=device, dtype=dtype, requires_grad=True)
-    V = torch.randn(B, SEQ_LEN, H, D, device=device, dtype=dtype, requires_grad=True)
-    W = torch.softmax(torch.randn(B, SEQ_LEN, HQ, S, device=device, dtype=torch.float32), dim=-1).to(dtype)
-    W.requires_grad_(True)
-    q_pos_emb = torch.randn(HQ, D, device=device, dtype=torch.float32) * 0.02
-    k_pos_emb = torch.randn(block_size, H, D, device=device, dtype=torch.float32) * 0.02
-
-    block_indices = build_block_indices_block_M(
-        B=B, SEQ_LEN=SEQ_LEN, H=H, S=S, block_size=block_size,
-        overlap_ratio=0.8, block_M=block_M, device=device, kv_len=SEQ_LEN,
-    )
-
-    print("[intra-add-pos smoke] running forward")
-    O = HSA_block_M_head_intra_additive_pos(
-        Q, K, V, W, block_indices,
-        q_pos_emb, k_pos_emb,
-        block_size=block_size, sm_scale=scale, block_M=block_M,
-        mask_last_token=mask_last_token, is_training=True,
-    )
-    print(f"[intra-add-pos smoke] output shape={tuple(O.shape)}, finite={torch.isfinite(O.float()).all().item()}")
-    loss = O.float().square().mean()
-    print("[intra-add-pos smoke] running backward")
-    loss.backward()
-    for name, tensor in (("Q", Q), ("K", K), ("V", V), ("W", W)):
-        grad = tensor.grad
-        ok = grad is not None and torch.isfinite(grad.float()).all().item()
-        print(f"[intra-add-pos smoke] grad {name}: {None if grad is None else tuple(grad.shape)}, finite={ok}")
-    print("[intra-add-pos smoke] done")
-
-
-
 def compute_grad_diff(grad_hsa, grad_ref, name):
     if grad_hsa is None or grad_ref is None:
         print(f"{name}: grad is None")
@@ -1461,32 +1399,3 @@ def main_bwd_breakdown_latency(
         print("=" * 78)
     return inv_results
 
-
-
-if __name__ == "__main__":
-    main_intra_additive_pos_smoke(B=1, SEQ_LEN=999, H=1, HQ=8, D=64, S=4,
-                                  block_size=64, block_M=4, mask_last_token=True)
-    # main_block_M_correctness()
-
-    # main_bwd_breakdown_latency(
-    #     B=4, HQ=16, H=16, SEQ_LEN=8192,
-    #     S=16, D=192, block_size=64,
-    #     real_indices_path="real_indices/indices_8192.pt",
-    #     layer_idx=None,
-    #     M_list=(16,),
-    #     nt_fwd_list=(128,),
-    #     nt_bwd_list=(128,),
-    #     paired_only=False,
-    #     num_warmup=20, num_iters=50,
-    #     mask_last_token=True,
-    # )
-
-    # params_list = [
-    #     (1, 1000, 1, 8, 64, 4, 32),
-    #     (2, 2048, 2, 16, 128, 4, 32),
-    #     (3, 512, 1, 8, 64, 4, 32),
-    #     (4, 512, 2, 16, 128, 4, 64),
-    #     (5, 256, 1, 8, 64, 4, 64),
-    # ]
-    # for p in params_list:
-    #     test_correctness_fp32(*p)

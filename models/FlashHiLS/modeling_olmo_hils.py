@@ -386,17 +386,32 @@ class Olmo3Attention(nn.Module):
             # attn_output: (B, L, h, d) — attention_interface already transposes
         else:
             attn_weights = None
+            q_blhd = query_states.transpose(1, 2).contiguous()
+            k_blhd = key_states.transpose(1, 2).contiguous()
+            v_blhd = value_states.transpose(1, 2).contiguous()
+            kv_start = 0
+            if past_key_values is not None:
+                kv_end = None
+                if cache_position is not None and cache_position.numel() > 0:
+                    kv_end = int(cache_position[-1].item()) + 1
+                elif self.layer_idx < len(past_key_values.layers):
+                    kv_layer = past_key_values.layers[self.layer_idx]
+                    if hasattr(kv_layer, "get_seq_length"):
+                        kv_end = int(kv_layer.get_seq_length())
+                if kv_end is not None:
+                    kv_start = max(kv_end - k_blhd.shape[1], 0)
             attn_output, _ = flex_attn_tl(
-                query_states,
-                key_states,
-                value_states,
+                q_blhd,
+                k_blhd,
+                v_blhd,
                 window_size = self.sliding_window,
                 chunk_size = self.chunk_size,
                 training = past_key_values is None,
                 mask_lmk= True,
-                expand_to_chunk = False
+                expand_to_chunk = False,
+                kv_start=kv_start,
             )
-            # flex_attn_tl returns (B, h, L, d), transpose to (B, L, h, d)
+            # flex_attn_tl returns (B, L, h, d) directly
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)

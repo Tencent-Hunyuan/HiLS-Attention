@@ -371,9 +371,9 @@ class HiLSAttention(nn.Module):
             assert doc_ids is None, f'doc_ids is not supported for batch size > 1, but got doc ids {doc_ids}'
 
         swa_o, lse_sum = flex_attn_tl(
-            hsa_q_norm_rope.transpose(1, 2),
-            hsa_k_norm_rope.transpose(1, 2),
-            hsa_v.transpose(1, 2),
+            hsa_q_norm_rope,
+            hsa_k_norm_rope,
+            hsa_v,
             window_size=self.hsa_sliding_window,
             chunk_size=self.chunk_size,
             training=(past_key_values is None),
