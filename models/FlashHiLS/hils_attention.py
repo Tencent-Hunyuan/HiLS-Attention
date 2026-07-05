@@ -264,10 +264,10 @@ class HiLSAttention(nn.Module):
         
         self.is_causal = True
         
-        from ops.hils_fwd_bwd_head import HSA_block_M_head as HSA
+        from ops.hils_fwd_bwd_head import HiLS_block_M_head as HiLS
         from ops.topk_head_softmax import online_softmax_topk_head as topk_func
         self.topk_func = topk_func
-        self.hils_func = HSA
+        self.hils_func = HiLS
 
         self.enable_prior_query = getattr(config, "enable_prior_query", True)
         self.enable_chunk_pooling = getattr(config, "enable_chunk_pooling", False)
@@ -344,8 +344,8 @@ class HiLSAttention(nn.Module):
             hils_q_norm_rope = hils_q_norm_nope
             hils_k_norm_rope = hils_k_norm_nope
 
-        # Inference/chunk-prefill: HSA KV cache.  Keep the cached K in the
-        # same representation that retrieval and HSA attention consume.
+        # Inference/chunk-prefill: HiLS KV cache.  Keep the cached K in the
+        # same representation that retrieval and HiLS attention consume.
         hils_k_for_cache = hils_k_norm_rope if self.apply_hils_rope else hils_k_norm_nope
         if use_cache and past_key_values is not None:
             hils_cache_idx = self.layer_idx + self.config.num_hidden_layers

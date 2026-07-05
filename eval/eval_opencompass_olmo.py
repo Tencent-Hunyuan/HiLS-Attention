@@ -1,6 +1,6 @@
 import sys
 from transformers import AutoConfig, AutoModelForCausalLM
-from models.FlashHiLS.configuration_hils import HSAConfig
+from models.FlashHiLS.configuration_hils import HiLSConfig
 
 from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
 
@@ -18,10 +18,10 @@ def _pop_cli_arg(name: str):
 
 _pop_cli_arg("--hsa-config")
 
-HSAConfig.model_type = "olmo_hils"
-AutoConfig.register("olmo_hils", HSAConfig)
-HiLSForCausalLM.config_class = HSAConfig
-AutoModelForCausalLM.register(HSAConfig, HiLSForCausalLM)
+HiLSConfig.model_type = "olmo_hils"
+AutoConfig.register("olmo_hils", HiLSConfig)
+HiLSForCausalLM.config_class = HiLSConfig
+AutoModelForCausalLM.register(HiLSConfig, HiLSForCausalLM)
 
 from opencompass.cli.main import main
 

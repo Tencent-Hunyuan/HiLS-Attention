@@ -10,7 +10,7 @@ from tilelang import language as T
 from einops import rearrange
 
 
-def hsa_torch_ref(q, k, v, weights, indices, *, chunk_size: int, sm_scale: float, block_q: int, mask_last_token: bool = True, slope=None):
+def hils_torch_ref(q, k, v, weights, indices, *, chunk_size: int, sm_scale: float, block_q: int, mask_last_token: bool = True, slope=None):
 
     B, q_len, HQ, D = q.shape
     _, kv_len, H, Dk = k.shape
@@ -257,7 +257,7 @@ def hierarchical_sparse_attention_block_M_reuseIndices(
     slope_shape = [heads]
 
     @T.prim_func
-    def hsa_block_M_reuseIndices(
+    def hils_block_M_reuseIndices(
             Q: T.Tensor(q_shape, dtype),
             K: T.Tensor(k_shape, dtype),
             V: T.Tensor(v_shape, dtype),
@@ -485,7 +485,7 @@ def hierarchical_sparse_attention_block_M_reuseIndices(
                     for g, v in T.Parallel(groups, BV):
                         Output[i_b, tq, i_h * groups + g, v] = O_shared[h_start + g, v]
 
-    return hsa_block_M_reuseIndices
+    return hils_block_M_reuseIndices
 
 
 @tilelang.jit(
@@ -566,7 +566,7 @@ def hierarchical_sparse_attention_bwd_dqkv_block_M_inverse(
     slope_shape = [heads]
 
     @T.prim_func
-    def hsa_bwd_dqkv_block_M_inverse_reuseIndices(
+    def hils_bwd_dqkv_block_M_inverse_reuseIndices(
         Q: T.Tensor(q_shape, dtype),
         K: T.Tensor(k_shape, dtype),
         V: T.Tensor(v_shape, dtype),
@@ -755,12 +755,12 @@ def hierarchical_sparse_attention_bwd_dqkv_block_M_inverse(
                     h_start = q_idx * G
                     T.copy(dQ_shared[h_start:h_start + G, :], DQ[i_b, tq, i_h * G:(i_h + 1) * G, :])
 
-    return hsa_bwd_dqkv_block_M_inverse_reuseIndices
+    return hils_bwd_dqkv_block_M_inverse_reuseIndices
 
 
 
 
-class _hsa_block_M_attention_inverse(torch.autograd.Function):
+class _hils_block_M_attention_inverse(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, q, k, v, weights, indices,
@@ -855,7 +855,7 @@ class _hsa_block_M_attention_inverse(torch.autograd.Function):
     def backward(ctx, do):
         if not getattr(ctx, "is_training", True):
             raise RuntimeError(
-                "[_hsa_block_M_attention_inverse] forward  is_training=False , "
+                "[_hils_block_M_attention_inverse] forward  is_training=False , "
                 "BWDof merged indices / ScoresLSE, without backward."
             )
         q, k, v, weights, indices, scores_lse, \
@@ -906,9 +906,9 @@ class _hsa_block_M_attention_inverse(torch.autograd.Function):
 
 
 # Empirically tuned (block_M, num_threads_fwd, num_threads_bwd) per group size G
-# for HSA_block_M_head. Only used when the corresponding kwarg is not explicitly
+# for HiLS_block_M_head. Only used when the corresponding kwarg is not explicitly
 # provided by the caller. Format: G -> (block_M, fwd_threads, bwd_threads).
-_HSA_PREROTATE_TUNED_BY_G = {
+_HILS_PREROTATE_TUNED_BY_G = {
     16: (4, 128, 128),
     8:  (8, 128, 128),
     4:  (8, 64, 128),
@@ -917,7 +917,7 @@ _HSA_PREROTATE_TUNED_BY_G = {
 }
 
 
-def HSA_block_M_head(
+def HiLS_block_M_head(
     q, k, v, weights, indices,
     block_size=64, sm_scale=None, block_M=None,
     mask_last_token=True, dtype="bfloat16", accum_dtype="float",
@@ -930,7 +930,7 @@ def HSA_block_M_head(
     assert HQ % H == 0, f"HQ={HQ} must be divisible by H={H}"
     G = HQ // H
 
-    tuned = _HSA_PREROTATE_TUNED_BY_G.get(G)
+    tuned = _HILS_PREROTATE_TUNED_BY_G.get(G)
     if tuned is not None:
         tuned_M, tuned_fwd_t, tuned_bwd_t = tuned
         applied = []
@@ -948,7 +948,7 @@ def HSA_block_M_head(
         num_threads_fwd = num_threads
     if num_threads_bwd is None:
         num_threads_bwd = num_threads
-    return _hsa_block_M_attention_inverse.apply(
+    return _hils_block_M_attention_inverse.apply(
         q, k, v, weights, indices,
         block_size, sm_scale, block_M,
         mask_last_token, dtype, accum_dtype,
@@ -956,11 +956,11 @@ def HSA_block_M_head(
     )
 
 
-def compute_grad_diff(grad_hsa, grad_ref, name):
-    if grad_hsa is None or grad_ref is None:
+def compute_grad_diff(grad_hils, grad_ref, name):
+    if grad_hils is None or grad_ref is None:
         print(f"{name}: grad is None")
         return None
-    diff = (grad_hsa.float() - grad_ref.float()).abs()
+    diff = (grad_hils.float() - grad_ref.float()).abs()
     max_diff = diff.max().item()
     print(f"{name} max error: {max_diff:.6e}")
     return max_diff
@@ -997,7 +997,7 @@ def main_block_M_correctness():
 
     grad_output = torch.randn((B, q_len, HQ, D), dtype=dtype, device=device)
 
-    O_ref = hsa_torch_ref(
+    O_ref = hils_torch_ref(
         Q.float().detach(), K.float().detach(), V.float().detach(), W.detach(), block_indices,
         chunk_size=block_size, sm_scale=scale, block_q=1, mask_last_token=mask_last_token,
     )
@@ -1006,7 +1006,7 @@ def main_block_M_correctness():
     K.grad = None
     V.grad = None
     W.grad = None
-    O_ref_bwd = hsa_torch_ref(
+    O_ref_bwd = hils_torch_ref(
         Q.float(), K.float(), V.float(), W.float(), block_indices,
         chunk_size=block_size, sm_scale=scale, block_q=1, mask_last_token=mask_last_token,
     )
@@ -1020,13 +1020,13 @@ def main_block_M_correctness():
     K.grad = None
     V.grad = None
     W.grad = None
-    O_hsa = HSA_block_M_head(
+    O_hils = HiLS_block_M_head(
         Q, K, V, W, block_indices,
         block_size=block_size, sm_scale=scale, block_M=block_M, mask_last_token=mask_last_token,
     )
-    print("[Tilelang HSA_block_M_head] vs [Torch Reference]:")
-    print(f"forward max error: {(O_hsa.float() - O_ref.float()).abs().max().item():.6e}")
-    O_hsa.backward(grad_output)
+    print("[Tilelang HiLS_block_M_head] vs [Torch Reference]:")
+    print(f"forward max error: {(O_hils.float() - O_ref.float()).abs().max().item():.6e}")
+    O_hils.backward(grad_output)
 
     compute_grad_diff(Q.grad.clone(), DQ_ref, "DQ (inverse)")
     compute_grad_diff(K.grad.clone(), DK_ref, "DK (inverse)")
@@ -1063,13 +1063,13 @@ def test_correctness_fp32(B=1, SEQ_LEN=1024, H=1, HQ=8, D=64, S=4, block_size=32
     W = torch.nan_to_num(W, 0.0).detach().requires_grad_(True)
     grad_output = torch.randn((B, SEQ_LEN, HQ, D), dtype=dtype, device=device)
 
-    O_hsa = HSA_block_M_head(
+    O_hils = HiLS_block_M_head(
         Q, K, V, W, block_indices,
         block_size=block_size, sm_scale=scale, block_M=block_M,
         mask_last_token=mask_last_token, dtype="float", accum_dtype="float",
         num_threads=64, is_training=True,
     )
-    O_ref = hsa_torch_ref(
+    O_ref = hils_torch_ref(
         Q.detach(), K.detach(), V.detach(), W.detach(), block_indices,
         chunk_size=block_size,
         sm_scale=scale,
@@ -1077,19 +1077,19 @@ def test_correctness_fp32(B=1, SEQ_LEN=1024, H=1, HQ=8, D=64, S=4, block_size=32
         mask_last_token=mask_last_token,
     )
 
-    torch.testing.assert_close(O_hsa.float(), O_ref.float(), atol=0.005, rtol=0.005, msg="Forward mismatch")
+    torch.testing.assert_close(O_hils.float(), O_ref.float(), atol=0.005, rtol=0.005, msg="Forward mismatch")
 
-    O_hsa.backward(grad_output)
-    DQ_hsa = Q.grad.clone()
-    DK_hsa = K.grad.clone()
-    DV_hsa = V.grad.clone()
-    DW_hsa = W.grad.clone()
+    O_hils.backward(grad_output)
+    DQ_hils = Q.grad.clone()
+    DK_hils = K.grad.clone()
+    DV_hils = V.grad.clone()
+    DW_hils = W.grad.clone()
 
     Q.grad = None
     K.grad = None
     V.grad = None
     W.grad = None
-    O_ref_bwd = hsa_torch_ref(
+    O_ref_bwd = hils_torch_ref(
         Q, K, V, W, block_indices,
         chunk_size=block_size,
         sm_scale=scale,
@@ -1111,10 +1111,10 @@ def test_correctness_fp32(B=1, SEQ_LEN=1024, H=1, HQ=8, D=64, S=4, block_size=32
         print(msg)
         assert get_err_ratio(ref, tri) < ratio, msg
 
-    assert_close("DQ (inverse)", Q.grad, DQ_hsa, 0.005)
-    assert_close("DK (inverse)", K.grad, DK_hsa, 0.005)
-    assert_close("DV (inverse)", V.grad, DV_hsa, 0.005)
-    assert_close("DW (inverse)", W.grad, DW_hsa, 0.005)
+    assert_close("DQ (inverse)", Q.grad, DQ_hils, 0.005)
+    assert_close("DK (inverse)", K.grad, DK_hils, 0.005)
+    assert_close("DV (inverse)", V.grad, DV_hils, 0.005)
+    assert_close("DW (inverse)", W.grad, DW_hils, 0.005)
     print(f"FP32 Correctness Test Passed for B={B}, SEQ_LEN={SEQ_LEN}, H={H}, HQ={HQ}, D={D}, S={S}, block_size={block_size}")
 
 
@@ -1133,10 +1133,10 @@ def _load_real_indices_for_breakdown(pt_path, B, layer_idx=None, device="cuda"):
     all_layer_idxs = sorted({li for s in samples for li in s["layers"].keys()})
     if layer_idx is None:
         layer_idx = all_layer_idxs[0]
-        print(f"  Automatically selected the first HSA layer: layer_idx={layer_idx}")
+        print(f"  Automatically selected the first HiLS layer: layer_idx={layer_idx}")
     else:
         assert layer_idx in all_layer_idxs
-    print(f"  Available HSA layers: {all_layer_idxs}")
+    print(f"  Available HiLS layers: {all_layer_idxs}")
 
     S = config["hils_topk"]
     indices_list, weights_list = [], []
@@ -1280,7 +1280,7 @@ def main_bwd_breakdown_latency(
 
     print()
     print("=" * 78)
-    print("[HSA_block_M_head autograd]  using the full autograd.Function path (single-kernel backward)")
+    print("[HiLS_block_M_head autograd]  using the full autograd.Function path (single-kernel backward)")
     print("=" * 78)
     header_inv = (f"{'M':>3} {'nt_f':>4} {'nt_b':>4} | "
                   f"{'FWD':>8} {'BWD':>8} {'TOTAL':>8} | {'BWD/FWD':>7}")
@@ -1303,14 +1303,14 @@ def main_bwd_breakdown_latency(
 
 
             for _ in range(num_warmup):
-                _ = HSA_block_M_head(
+                _ = HiLS_block_M_head(
                     g_q, g_k, g_v, g_weights, g_indices,
                     block_size=block_size, sm_scale=sm_scale_g,
                     block_M=m,
                     num_threads_fwd=nf, num_threads_bwd=nb,
                     mask_last_token=mask_last_token,
                 )
-                g_o = HSA_block_M_head(
+                g_o = HiLS_block_M_head(
                     g_q, g_k, g_v, g_weights, g_indices,
                     block_size=block_size, sm_scale=sm_scale_g,
                     block_M=m,
@@ -1328,7 +1328,7 @@ def main_bwd_breakdown_latency(
             torch.cuda.synchronize()
             e_start.record()
             for _ in range(num_iters):
-                _ = HSA_block_M_head(
+                _ = HiLS_block_M_head(
                     g_q, g_k, g_v, g_weights, g_indices,
                     block_size=block_size, sm_scale=sm_scale_g,
                     block_M=m,
@@ -1343,7 +1343,7 @@ def main_bwd_breakdown_latency(
             torch.cuda.synchronize()
             e_start.record()
             for _ in range(num_iters):
-                g_o = HSA_block_M_head(
+                g_o = HiLS_block_M_head(
                     g_q, g_k, g_v, g_weights, g_indices,
                     block_size=block_size, sm_scale=sm_scale_g,
                     block_M=m,
@@ -1386,7 +1386,7 @@ def main_bwd_breakdown_latency(
 
         print()
         print("=" * 78)
-        print(" Best configuration(different, HSA_block_M_head autograd path)")
+        print(" Best configuration(different, HiLS_block_M_head autograd path)")
         print("=" * 78)
         def _fmt(r, tag):
             return (f"  [{tag:<9}] M={r['M']:>2}, "

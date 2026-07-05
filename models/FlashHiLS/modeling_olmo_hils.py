@@ -6,7 +6,7 @@ import math
 from .HoPE import HoPERotaryEmbedding
 from torch import nn
 from .hils_attention import HiLSAttention as LandmarkHSA_base
-from .configuration_hils import HSAConfig
+from .configuration_hils import HiLSConfig
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache
 from transformers.generation import GenerationMixin
@@ -75,7 +75,7 @@ if USE_LIGER_ROPE or USE_LIGER_SWIGLU:
     from liger_kernel.transformers.swiglu import LigerSwiGLUMLP
 
 
-def resolve_olmo_head_dim(config: HSAConfig) -> int:
+def resolve_olmo_head_dim(config: HiLSConfig) -> int:
     head_dim = config.hidden_size // config.num_attention_heads
     config_head_dim = getattr(config, "head_dim", None)
     if config_head_dim != head_dim:
@@ -144,7 +144,7 @@ def get_model_vocab_size(config) -> int:
     return next_of_y(config.vocab_size + 1, 32)
 
 
-def ensure_qwen3_rope_parameters(config: HSAConfig) -> None:
+def ensure_qwen3_rope_parameters(config: HiLSConfig) -> None:
     if getattr(config, "rope_parameters", None) is not None:
         return
 
@@ -288,7 +288,7 @@ def eager_attention_forward(
 class Olmo3Attention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: HSAConfig, layer_idx: int):
+    def __init__(self, config: HiLSConfig, layer_idx: int):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
@@ -419,7 +419,7 @@ class Olmo3Attention(nn.Module):
 
 
 class Olmo3DecoderLayer(GradientCheckpointingLayer):
-    def __init__(self, config: HSAConfig, layer_idx: int, attn_cls):
+    def __init__(self, config: HiLSConfig, layer_idx: int, attn_cls):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.self_attn = attn_cls(config=config, layer_idx=layer_idx)
@@ -468,7 +468,7 @@ class Olmo3DecoderLayer(GradientCheckpointingLayer):
 
 
 class Olmo3RotaryEmbedding(nn.Module):
-    def __init__(self, config: HSAConfig, device=None):
+    def __init__(self, config: HiLSConfig, device=None):
         super().__init__()
         resolve_olmo_head_dim(config)
         # BC: "rope_type" was originally "type"
@@ -490,7 +490,7 @@ class Olmo3RotaryEmbedding(nn.Module):
         self.reinit = False
 
 
-    def __init__(self, config: HSAConfig, device=None):
+    def __init__(self, config: HiLSConfig, device=None):
         super().__init__()
         # BC: "rope_type" was originally "type"
         if hasattr(config, "rope_scaling") and config.rope_scaling is not None:
@@ -601,7 +601,7 @@ class Olmo3RotaryEmbedding(nn.Module):
 
 
 class Olmo3PreTrainedModel(PreTrainedModel):
-    config_class = HSAConfig
+    config_class = HiLSConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
     _no_split_modules = ["Olmo3DecoderLayer"]
@@ -637,7 +637,7 @@ class Olmo3PreTrainedModel(PreTrainedModel):
 
 class HiLSModel(Olmo3PreTrainedModel):
 
-    def __init__(self, config: HSAConfig):
+    def __init__(self, config: HiLSConfig):
         super().__init__(config)
         resolve_olmo_head_dim(config)
         ensure_qwen3_rope_parameters(config)

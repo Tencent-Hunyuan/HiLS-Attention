@@ -22,7 +22,7 @@ from transformers.utils import logging
 logger = logging.get_logger(__name__)
 
 
-class HSAConfig(PretrainedConfig):
+class HiLSConfig(PretrainedConfig):
     r"""
 
     Args:

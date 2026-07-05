@@ -23,14 +23,14 @@ if PROJECT_ROOT not in sys.path:
 
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-from models.FlashHiLS.configuration_hils import HSAConfig
+from models.FlashHiLS.configuration_hils import HiLSConfig
 from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
 
 # Override the default model_type to match the registered OLMo HiLS name.
-HSAConfig.model_type = "olmo_hils"
-AutoConfig.register("olmo_hils", HSAConfig)
-HiLSForCausalLM.config_class = HSAConfig
-AutoModelForCausalLM.register(HSAConfig, HiLSForCausalLM)
+HiLSConfig.model_type = "olmo_hils"
+AutoConfig.register("olmo_hils", HiLSConfig)
+HiLSForCausalLM.config_class = HiLSConfig
+AutoModelForCausalLM.register(HiLSConfig, HiLSForCausalLM)
 
 from utils.landmark_utils import insert_special_tokens, create_position_ids_with_landmarks
 

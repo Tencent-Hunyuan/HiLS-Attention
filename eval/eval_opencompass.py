@@ -2,7 +2,7 @@ import json
 import os
 import sys
 from transformers import AutoConfig, AutoModelForCausalLM, Qwen3Config
-from models.FlashHiLS.configuration_hils import HSAConfig
+from models.FlashHiLS.configuration_hils import HiLSConfig
 def _pop_cli_arg(name: str):
     if name not in sys.argv:
         return None
@@ -58,13 +58,13 @@ if _hsa_resolved[0] is not None:
     HiLSForCausalLM, model_type = _hsa_resolved
 
 
-    class OpenCompassHSAConfig(HSAConfig):
+    class OpenCompassHiLSConfig(HiLSConfig):
         model_type = model_type
 
 
-    AutoConfig.register(model_type, OpenCompassHSAConfig, exist_ok=True)
-    HiLSForCausalLM.config_class = OpenCompassHSAConfig
-    AutoModelForCausalLM.register(OpenCompassHSAConfig, HiLSForCausalLM, exist_ok=True)
+    AutoConfig.register(model_type, OpenCompassHiLSConfig, exist_ok=True)
+    HiLSForCausalLM.config_class = OpenCompassHiLSConfig
+    AutoModelForCausalLM.register(OpenCompassHiLSConfig, HiLSForCausalLM, exist_ok=True)
 
 from models.FullAttn.modeling_fullattn import FullAttnForCausalLM
 

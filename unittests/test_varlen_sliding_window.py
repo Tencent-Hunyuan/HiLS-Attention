@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from models.FlashHiLS.configuration_hils import HSAConfig
+from models.FlashHiLS.configuration_hils import HiLSConfig
 from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM
 
 try:
@@ -29,7 +29,7 @@ KL_THRESHOLD = 1e-4  # softmax KL divergence threshold for bf16 equivalence
 
 
 def _build_model(device: str, dtype: torch.dtype, sliding_window: int) -> HiLSForCausalLM:
-    config = HSAConfig(
+    config = HiLSConfig(
         vocab_size=128,
         hidden_size=64,
         intermediate_size=128,
@@ -52,7 +52,7 @@ def _build_model(device: str, dtype: torch.dtype, sliding_window: int) -> HiLSFo
     return model
 
 def _build_hybrid_model(device: str, dtype: torch.dtype, sliding_window: int) -> HiLSForCausalLM:
-    config = HSAConfig(
+    config = HiLSConfig(
         vocab_size=128,
         hidden_size=256,
         intermediate_size=256,

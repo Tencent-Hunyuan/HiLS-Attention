@@ -30,7 +30,7 @@ from tqdm import tqdm
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
 
-from models.FlashHiLS.configuration_hils import HSAConfig
+from models.FlashHiLS.configuration_hils import HiLSConfig
 
 
 # ============================================================
@@ -65,9 +65,9 @@ def resolve_hsa_class(config_path=None, checkpoint_path=None):
 
 def load_model(args, device):
     HiLSForCausalLM = resolve_hsa_class(args.config_path, args.checkpoint_path)
-    AutoConfig.register("olmo_hils", HSAConfig)
-    HiLSForCausalLM.config_class = HSAConfig
-    AutoModelForCausalLM.register(HSAConfig, HiLSForCausalLM)
+    AutoConfig.register("olmo_hils", HiLSConfig)
+    HiLSForCausalLM.config_class = HiLSConfig
+    AutoModelForCausalLM.register(HiLSConfig, HiLSForCausalLM)
 
     model_kwargs = {
         'torch_dtype': torch.bfloat16,

@@ -25,9 +25,9 @@ def register_olmo_hils_modeling(architecture: str):
 
 @MODEL_CONFIG_REGISTRY.register('qwen_hils')
 def register_qwen_hils_config():
-    from .configuration_hils import HSAConfig
+    from .configuration_hils import HiLSConfig
 
-    class QwenHiLSConfig(HSAConfig):
+    class QwenHiLSConfig(HiLSConfig):
         model_type = 'qwen_hils'
 
     return QwenHiLSConfig
@@ -35,9 +35,9 @@ def register_qwen_hils_config():
 
 @MODEL_CONFIG_REGISTRY.register('olmo_hils')
 def register_olmo_hils_config():
-    from .configuration_hils import HSAConfig
+    from .configuration_hils import HiLSConfig
 
-    class OlmoHiLSConfig(HSAConfig):
+    class OlmoHiLSConfig(HiLSConfig):
         model_type = 'olmo_hils'
 
     return OlmoHiLSConfig

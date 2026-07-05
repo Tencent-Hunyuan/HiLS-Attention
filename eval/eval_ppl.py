@@ -62,10 +62,10 @@ def is_hils_model(config_path=None, checkpoint_path=None):
 
 
 def load_hsa_config(config_path):
-    from models.FlashHiLS.configuration_hils import HSAConfig
+    from models.FlashHiLS.configuration_hils import HiLSConfig
 
     with open(config_path, "r", encoding="utf-8") as fin:
-        return HSAConfig.from_dict(json.load(fin))
+        return HiLSConfig.from_dict(json.load(fin))
 
 
 def load_eval_config(config_path, checkpoint_path=None):
@@ -97,14 +97,14 @@ def register_hsa_model(config_path=None, checkpoint_path=None):
         from models.FlashHiLS.modeling_qwen_hils import HiLSForCausalLM
         print("Using Qwen HiLS implementation")
 
-    from models.FlashHiLS.configuration_hils import HSAConfig
+    from models.FlashHiLS.configuration_hils import HiLSConfig
 
-    class EvalHSAConfig(HSAConfig):
+    class EvalHiLSConfig(HiLSConfig):
         model_type = model_type
 
-    HiLSForCausalLM.config_class = EvalHSAConfig
-    _register_with_exist_ok(AutoConfig.register, model_type, EvalHSAConfig)
-    _register_with_exist_ok(AutoModelForCausalLM.register, EvalHSAConfig, HiLSForCausalLM)
+    HiLSForCausalLM.config_class = EvalHiLSConfig
+    _register_with_exist_ok(AutoConfig.register, model_type, EvalHiLSConfig)
+    _register_with_exist_ok(AutoModelForCausalLM.register, EvalHiLSConfig, HiLSForCausalLM)
 
 
 def get_config_flag(config_path, key, default=False):
