@@ -8,7 +8,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$PROJECT_ROOT"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
 
-python3 utils/convert_basemodel_to_hsa.py \
+python3 utils/convert_basemodel_to_hils.py \
     --target_config $MODEL_CONFIG \
     --base_path $BASE_MODEL_DIR \
     --output_path $OUTPUT_DIR \

@@ -1,21 +1,18 @@
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Optional, Tuple
 import math
 import torch.nn as nn
 from einops import rearrange
 from veomni.utils import logging
 from ops.rope_tilelang_fp32 import single_tensor_rope_autograd
 import torch
-import os
 import torch.nn.functional as F
 from ops.flex_attn_tilelang import flex_attn_tl
 from ops.chunk_attn_pool_tilelang import chunk_attn_pool_tilelang
-from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 from veomni.utils.import_utils import (
     is_liger_kernel_available,
 )
 if is_liger_kernel_available():
     from liger_kernel.transformers.rope import liger_rotary_pos_emb
-from ops.flex_attn_tilelang import flex_attn_tl
 
 logger = logging.get_logger(__name__)
 
@@ -511,7 +508,7 @@ class HiLSAttention(nn.Module):
                     lmk_k = lmk_k_source[:, : full_chunks * self.chunk_size, :, :]
                     lmk_k = rearrange(lmk_k, "b (n s) h d -> b n s h d", s=self.chunk_size).mean(dim=2)
                 else:
-                    lmk_k: Any = lmk_k_source[:, self.chunk_size - 1::self.chunk_size, : ,:]  # (B, L // S, hsa_kv, d)
+                    lmk_k = lmk_k_source[:, self.chunk_size - 1::self.chunk_size, :, :]  # (B, L // S, hsa_kv, d)
 
             B, S,  H, D = lmk_k.shape
             lmk_k = lmk_k.reshape(B, S, H, D)
@@ -583,11 +580,7 @@ class HiLSAttention(nn.Module):
             else:
                 o_lower = swa_o
         
-        if self.hsa_denom > 1:
-            o = torch.cat([o_upper, o_lower], dim=2)
-        else:
-            o = o_lower
-        o = rearrange(o, 'B L h d->B L (h d)')
+        o = rearrange(o_lower, 'B L h d->B L (h d)')
         
         return self.o_proj(o), None
 

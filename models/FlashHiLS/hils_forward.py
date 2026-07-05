@@ -1,19 +1,14 @@
 """Shared forward implementations for HiLSModel and HiLSForCausalLM."""
 
 import inspect
-from tkinter import N
-from typing import Optional, Union
 
 from utils.flex_attn import cu_seqlens_to_doc_ids
 import torch
-import torch.nn.functional as F
 from transformers.cache_utils import Cache, DynamicCache, DynamicLayer
 from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask
-from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
-from transformers.processing_utils import Unpack
 
-from utils.hsa_cache_utils import HSADynamicLayer
+from utils.hils_cache_utils import HiLSDynamicLayer
 
 from veomni.distributed.parallel_state import get_parallel_state
 from veomni.distributed.sequence_parallel import slice_position_embedding
@@ -151,7 +146,7 @@ def hils_model_forward(
         while len(past_key_values.layers) < required_layers:
             idx = len(past_key_values.layers)
             if idx >= self.config.num_hidden_layers:
-                past_key_values.layers.append(HSADynamicLayer())
+                past_key_values.layers.append(HiLSDynamicLayer())
             else:
                 past_key_values.layers.append(DynamicLayer())
 

@@ -59,7 +59,6 @@ def _build_hybrid_model(device: str, dtype: torch.dtype, sliding_window: int) ->
         num_hidden_layers=1,
         num_swa_layers=0,
         num_attention_heads=4,
-        hsa_heads=4,
         num_key_value_heads=4,
         head_dim=64,
         use_sliding_window=True,

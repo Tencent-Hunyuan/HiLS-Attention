@@ -1,7 +1,7 @@
-"""Convert OLMo3 base model weights to HSA model weights.
+"""Convert OLMo3 base model weights to HiLS model weights.
 
 Usage:
-    python utils/convert_basemodel_to_hsa.py \
+    python utils/convert_basemodel_to_hils.py \
         --base_path /path/to/olmo3_base_model \
         --target_config configs/olmo3_7B/olmo3_lhsa_interleave_8KA2K_non_unified.json \
         --output_path /path/to/output/converted_model.pt \
@@ -107,11 +107,6 @@ def get_lhsa_layer_indices(config: Dict[str, Any]) -> List[int]:
     ]
 
 
-def is_full_hsa(config: Dict[str, Any]) -> bool:
-    """Check if hsa_heads == num_attention_heads (hsa_denom == 1)."""
-    n_heads = config["num_attention_heads"]
-    hsa_heads = config.get("hsa_heads", n_heads // 4)
-    return hsa_heads == n_heads
 
 
 # ---------------------------------------------------------------------------
@@ -150,20 +145,6 @@ def normalize_key(key: str) -> str:
     return key
 
 
-def extract_head_rows(weight: torch.Tensor, indices: List[int], head_dim: int) -> torch.Tensor:
-    """Extract rows corresponding to specific head indices."""
-    return torch.cat([weight[i * head_dim:(i + 1) * head_dim] for i in indices], dim=0)
-
-
-def mean_pool_heads(
-    weight: torch.Tensor, indices: List[int], n_groups: int, head_dim: int
-) -> torch.Tensor:
-    """Pool len(indices) heads into n_groups by averaging within each group."""
-    rows = torch.stack([weight[i * head_dim:(i + 1) * head_dim] for i in indices])
-    grouped = rows.reshape(n_groups, len(indices) // n_groups, head_dim, -1)
-    return grouped.mean(dim=1).reshape(n_groups * head_dim, -1)
-
-
 # ---------------------------------------------------------------------------
 # 4. Build converted_sd directly from src_sd
 # ---------------------------------------------------------------------------
@@ -173,21 +154,18 @@ def build_converted_sd(
     target_config: Dict[str, Any],
     src_config: Dict[str, Any],
     lhsa_indices: List[int],
-    full_hsa_mode: bool,
 ) -> Tuple[Dict[str, torch.Tensor], List[Dict[str, Any]]]:
     """Build converted state dict directly from source state dict.
 
     For non-HSA keys: normalize key prefix and copy tensor as-is.
-    For current HiLS layers:
-      - hsa_denom == 1: copy base q/k/v/o_proj directly; names and shapes match.
-      - hsa_denom > 1: initialize the smaller q/k/v_proj from the base HiLS head subset.
+    For current HiLS layers: copy base q/k/v/o_proj directly; names and shapes match.
 
     New HiLS-only parameters such as lmk_q_proj and lmk_q_norm have no
     base-model source and are intentionally left randomly initialized.
     """
     converted_sd: Dict[str, torch.Tensor] = {}
     lhsa_set = set(lhsa_indices)
-    hsa_layer_logs: List[Dict[str, Any]] = []
+    hils_layer_logs: List[Dict[str, Any]] = []
 
     # Normalize all source keys first
     normalized_src: Dict[str, torch.Tensor] = {}
@@ -250,47 +228,18 @@ def build_converted_sd(
                 f"{[k for k in normalized_src if k.startswith(prefix)]}"
             )
 
-        if full_hsa_mode:
-            # Current LandmarkHSA uses the same q/k/v/o projection names as
-            # the base OLMo attention when hsa_denom == 1.
-            converted_sd[f"{prefix}q_proj.weight"] = src_q
-            converted_sd[f"{prefix}k_proj.weight"] = src_k
-            converted_sd[f"{prefix}v_proj.weight"] = src_v
-            converted_sd[f"{prefix}o_proj.weight"] = src_o
+        converted_sd[f"{prefix}q_proj.weight"] = src_q
+        converted_sd[f"{prefix}k_proj.weight"] = src_k
+        converted_sd[f"{prefix}v_proj.weight"] = src_v
+        converted_sd[f"{prefix}o_proj.weight"] = src_o
 
-            hsa_layer_logs.append({
-                "layer_idx": layer_idx,
-                "mode": "direct_qkv_reuse",
-                "copied": ["q_proj.weight", "k_proj.weight", "v_proj.weight", "o_proj.weight"],
-            })
-        else:
-            # hsa_denom > 1: the current LandmarkHSA no longer has separate
-            # hsa_q/k/v_proj modules, so initialize q/k/v_proj from the old
-            # retrieval head subset instead of writing obsolete hsa_* keys.
-            n_heads = target_config["num_attention_heads"]
-            n_kv_heads = target_config.get("num_key_value_heads", n_heads)
-            head_dim = target_config["hidden_size"] // n_heads
-            hsa_heads = target_config.get("hsa_heads", n_heads // 4)
-            hsa_qk_ratio = target_config.get("hsa_qk_ratio", 4)
-            h_hsa_kv = hsa_heads // hsa_qk_ratio
-            q_per_kv = n_heads // n_kv_heads
+        hils_layer_logs.append({
+            "layer_idx": layer_idx,
+            "mode": "direct_qkv_reuse",
+            "copied": ["q_proj.weight", "k_proj.weight", "v_proj.weight", "o_proj.weight"],
+        })
 
-            hsa_q_indices = list(range(n_heads - hsa_heads, n_heads))
-            hsa_kv_indices = sorted(set(i // q_per_kv for i in hsa_q_indices))
-
-            converted_sd[f"{prefix}q_proj.weight"] = extract_head_rows(src_q, hsa_q_indices, head_dim)
-            converted_sd[f"{prefix}k_proj.weight"] = mean_pool_heads(src_k, hsa_kv_indices, h_hsa_kv, head_dim)
-            converted_sd[f"{prefix}v_proj.weight"] = mean_pool_heads(src_v, hsa_kv_indices, h_hsa_kv, head_dim)
-            converted_sd[f"{prefix}o_proj.weight"] = src_o
-
-            hsa_layer_logs.append({
-                "layer_idx": layer_idx,
-                "mode": "head_subset_qkv_reuse",
-                "hsa_q_heads": hsa_q_indices,
-                "hsa_kv_heads": hsa_kv_indices,
-            })
-
-    return converted_sd, hsa_layer_logs
+    return converted_sd, hils_layer_logs
 
 
 def _extract_layer_idx(key: str) -> Optional[int]:
@@ -388,7 +337,7 @@ def init_external_lmk_embed(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert OLMo3 base model weights to HSA model weights"
+        description="Convert OLMo3 base model weights to HiLS model weights"
     )
     parser.add_argument(
         "--base_path", required=True, type=str,
@@ -396,7 +345,7 @@ def main():
     )
     parser.add_argument(
         "--target_config", required=True, type=str,
-        help="Path to target HSA model config JSON"
+        help="Path to target HiLS model config JSON"
     )
     parser.add_argument(
         "--output_path", required=True, type=str,
@@ -420,28 +369,23 @@ def main():
         target_config = json.load(f)
 
     lhsa_indices = get_lhsa_layer_indices(target_config)
-    full_hsa_mode = is_full_hsa(target_config) if lhsa_indices else False
 
     if lhsa_indices:
-        n_heads = target_config["num_attention_heads"]
-        hsa_heads = target_config.get("hsa_heads", n_heads // 4)
-        hsa_denom = n_heads // hsa_heads
-        mode_str = "direct_qkv_reuse" if full_hsa_mode else f"head_subset_qkv_reuse (hsa_denom={hsa_denom})"
         print(f"       HSA layers: {lhsa_indices}")
-        print(f"       Mode: {mode_str}, hsa_heads={hsa_heads}")
+        print("       Mode: direct_qkv_reuse")
     else:
-        print(f"       No HSA layers (all pure Olmo3Attention)")
+        print("       No HSA layers (all pure Olmo3Attention)")
 
     # ---- Step 3: Build converted_sd directly from src_sd ----
     print(f"[3/5] Converting weights (directly from src_sd, no dst model needed)...")
-    converted_sd, hsa_layer_logs = build_converted_sd(
-        src_sd, target_config, src_config, lhsa_indices, full_hsa_mode,
+    converted_sd, hils_layer_logs = build_converted_sd(
+        src_sd, target_config, src_config, lhsa_indices,
     )
     print(f"       Converted keys: {len(converted_sd)}")
 
-    if hsa_layer_logs:
+    if hils_layer_logs:
         print(f"       HSA layer conversion details:")
-        for entry in hsa_layer_logs:
+        for entry in hils_layer_logs:
             print(f"         Layer {entry['layer_idx']}: mode={entry['mode']}")
 
     # ---- Step 4: Pad vocab / init external lmk_embed & save converted state dict ----
@@ -540,11 +484,11 @@ def main():
                 "total_model": len(model.state_dict()),
                 "missing_keys": len(missing_keys),
                 "unexpected_keys": len(unexpected_keys),
-                "converted_hsa_layers": len(hsa_layer_logs),
+                "converted_hils_layers": len(hils_layer_logs),
             },
             "missing_keys": missing_keys,
             "unexpected_keys": unexpected_keys,
-            "converted_hsa_layers": hsa_layer_logs,
+            "converted_hils_layers": hils_layer_logs,
             "tie_word_embeddings": {
                 "source": src_config.get("tie_word_embeddings"),
                 "target": target_config.get("tie_word_embeddings"),

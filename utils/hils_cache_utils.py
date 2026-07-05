@@ -5,7 +5,7 @@ _OFFLOAD_SEQ_THRESHOLD = 128 * 1024
 _OFFLOAD_HIDDEN_DIM_THRESHOLD = 4096
 
 
-class HSADynamicLayer(CacheLayerMixin):
+class HiLSDynamicLayer(CacheLayerMixin):
     is_sliding = False
 
     def lazy_initialization(self, key_states: torch.Tensor, value_states: torch.Tensor) -> None:

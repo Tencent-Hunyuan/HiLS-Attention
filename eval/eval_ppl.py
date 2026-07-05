@@ -306,15 +306,6 @@ def build_eval_model(args, device, tp_size=1, use_hf_tp=False, use_veomni_tp=Fal
                 model.auto_insert_lmk = False
             if hasattr(model, "config"):
                 model.config.auto_insert_lmk = False
-        # device_map dispatch may leave the root-level lmk_embed parameter on
-        # `meta` or a wrong device (accelerate warns it doesn't match a
-        # submodule). Repair it from the checkpoint so it sits on the
-        # embed_tokens device; otherwise long-context PPL produces NaN.
-        try:
-            from models.FlashHiLS.hsa_device_utils import ensure_lmk_embed_materialized
-            ensure_lmk_embed_materialized(model, args.checkpoint_path)
-        except ImportError:
-            pass
         return model
 
     if not args.config_path:
