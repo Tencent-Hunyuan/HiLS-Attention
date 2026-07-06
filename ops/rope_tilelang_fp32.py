@@ -1,3 +1,11 @@
+"""
+Rotary Position Embedding
+================================================
+TileLang implementation of RoPE.
+
+Author: Xinyu Wei
+"""
+
 import torch
 import tilelang
 from tilelang import language as T
