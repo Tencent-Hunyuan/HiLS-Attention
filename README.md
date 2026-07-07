@@ -37,7 +37,6 @@ pip install -r requirements.txt
 
 
 ```bash
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export CORPUS_PATH=/path/to/tokenized/data
 export OUTPUT_DIR=outputs/checkpoints/hils_attn_8KA2K_HoPE_345M_prop3p1_qcal_r64
 bash scripts/pretrain/345M_exp_dist/pretrain_hils_attn_8KA2K_HoPE_345M_prop3p1_qcal_r64.sh
