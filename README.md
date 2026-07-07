@@ -3,8 +3,10 @@
 Official code for the paper [Hierarchical Sparse Attention Done Right: Toward Infinite Context Modeling](https://arxiv.org/abs/2607.02980).
 
 
-[![arXiv](https://img.shields.io/badge/arXiv-2607.02980-b31b1b?logo=arxiv)](https://arxiv.org/abs/2607.02980)
-[![GitHub](https://img.shields.io/badge/GitHub-HiLS--Attention-181717?logo=github&logoColor=white)](https://github.com/Tencent-Hunyuan/HiLS-Attention)
+<p align="center">
+  <a href="https://arxiv.org/abs/2607.02980"><img src="https://img.shields.io/badge/arXiv-2607.02980-b31b1b?logo=arxiv" alt="arXiv"></a>
+  <a href="https://github.com/Tencent-Hunyuan/HiLS-Attention"><img src="https://img.shields.io/badge/GitHub-HiLS--Attention-181717?logo=github&logoColor=white" alt="GitHub"></a>
+</p>
 
 HiLS-Attention is a chunk-wise sparse attention mechanism that learns chunk selection end-to-end under the language-modeling loss, enabling native sparse training for efficient long-context modeling.
 
@@ -35,10 +37,13 @@ pip install -r requirements.txt
 
 
 ```bash
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export CORPUS_PATH=/path/to/tokenized/data
 export OUTPUT_DIR=outputs/checkpoints/hils_attn_8KA2K_HoPE_345M_prop3p1_qcal_r64
 bash scripts/pretrain/345M_exp_dist/pretrain_hils_attn_8KA2K_HoPE_345M_prop3p1_qcal_r64.sh
 ```
+
+The script runs single-node training by default. If your environment already sets multi-node variables, force single-node mode with `HOST_NUM=1`, `INDEX=0`, and `NODE_IP_0=127.0.0.1` before launching.
 
 ### Continue Pre-Training
 
@@ -64,9 +69,9 @@ bash scripts/cpt/cpt_olmo3_8KA2K_lmk_token_tuning.sh
 
 ### Checkpoint Format
 
-Training saves distributed checkpoints (DCP). Some evaluation scripts can load DCP directly; generation and HuggingFace-based evaluation require HF-format checkpoints.
+Training saves distributed checkpoints (DCP). The PPL and RULER examples below load DCP checkpoints directly. HF conversion is only needed for HuggingFace-based generation or evaluation.
 
-Convert DCP to HF format:
+Convert DCP to HF format when needed:
 
 ```bash
 DCP_PATH=/path/to/checkpoints/global_step_xxx \
@@ -107,7 +112,6 @@ python eval/eval_ruler.py \
 
 
 ```bash
-bash scripts/eval/eval_olmo3_ruler_ppl.sh
 bash scripts/eval/eval_olmo3_longbench_v1.sh
 bash scripts/eval/eval_olmo3_opencompass.sh
 ```

@@ -1,15 +1,3 @@
-"""
-Test HiLS generation.
-Compare greedy decoding from generate() with argmax from a full forward pass.
-
-Validation flow:
-1. Run model.generate() on the prompt with greedy decoding.
-2. Concatenate prompt and generated tokens, insert LMK tokens externally, and run a full prefill forward pass.
-3. Remove logits at LMK positions externally and compare shifted argmax outputs with generated tokens.
-
-Reference: eval/eval_ppl_hf.py handles LMK insertion and removal outside the model.
-"""
-
 import sys
 import os
 import math
@@ -866,6 +854,3 @@ if __name__ == "__main__":
 
     print(f"[INFO] Arguments: {args}")
     main(args)
-
-
-# python unittests/test_generate_olmo.py
