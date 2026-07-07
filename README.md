@@ -43,8 +43,6 @@ export OUTPUT_DIR=outputs/checkpoints/hils_attn_8KA2K_HoPE_345M_prop3p1_qcal_r64
 bash scripts/pretrain/345M_exp_dist/pretrain_hils_attn_8KA2K_HoPE_345M_prop3p1_qcal_r64.sh
 ```
 
-The script runs single-node training by default. If your environment already sets multi-node variables, force single-node mode with `HOST_NUM=1`, `INDEX=0`, and `NODE_IP_0=127.0.0.1` before launching.
-
 ### Continue Pre-Training
 
 
