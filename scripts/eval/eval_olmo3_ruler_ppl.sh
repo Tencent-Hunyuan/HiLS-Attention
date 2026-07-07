@@ -41,7 +41,7 @@ EVAL_MODE="${EVAL_MODE:-all}"
 # Models: "name|config|ckpt_path|ruler_max_seq_len" (ruler cap optional)
 MODELS=(
     "lmk_token_tuning|configs/olmo3_7B/olmo3_8KA2K_lmk_token_tuning.json|../../checkpoints/olmo3_8KA2K_lmk_token_tuning/global_step_1192/hf_ckpt"
-    "olmo3_8KA2K_HoPE_LoRA_step13000|configs/olmo3_7B/olmo3_8KA2K_HoPE_LoRA.json|../../checkpoints/olmo3_8KA2K_HoPE_LoRA/global_step_13000/hf_ckpt"
+    "olmo3_8KA2K_HoPE_qcal_step13000|configs/olmo3_7B/olmo3_8KA2K_HoPE_qcal.json|../../checkpoints/olmo3_8KA2K_HoPE_qcal/global_step_13000/hf_ckpt"
 )
 
 GPU_IDS=(0 1 2 3 4 5 6 7)

@@ -26,8 +26,7 @@ HILS_CONFIGS=(
 )
 HF_PATHS=(
     # ../../checkpoints/olmo3_8KA2K_lmk_token_tuning/global_step_1192/hf_ckpt
-    # ../../checkpoints/olmo3_8KA2K_HoPE_LoRA/global_step_13000/hf_ckpt
-    /apdcephfs_tj5/share_300719894/user/guhao/checkpoints/olmo3_8KA2K_lmk_embed_HoPE_stage2/checkpoints/global_step_13000/hf_ckpt
+    ../../checkpoints/olmo3_8KA2K_HoPE_qcal/global_step_13000/hf_ckpt
 )
 
 DATASET_LIST=(
