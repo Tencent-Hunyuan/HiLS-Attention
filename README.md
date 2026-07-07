@@ -4,7 +4,12 @@ Official code for the paper [Hierarchical Sparse Attention Done Right: Toward In
 
 HiLS-Attention is a chunk-wise sparse attention mechanism that learns chunk selection end-to-end under the language-modeling loss, enabling native sparse training for efficient long-context modeling.
 
-HiLS-Attention Overview
+<p align="center">
+  <a href="https://arxiv.org/abs/2607.02980"><img src="https://img.shields.io/badge/arXiv-2607.02980-b31b1b?logo=arxiv" alt="arXiv"></a>
+  <a href="https://github.com/Tencent-Hunyuan/HiLS-Attention"><img src="https://img.shields.io/badge/GitHub-HiLS--Attention-181717?logo=github&logoColor=white" alt="GitHub"></a>
+</p>
+
+![HiLS-Attention Overview](./assets/hils_attn_overview.png)
 
 *Figure: Overview of HiLS-Attention. Naive block sparse attention selects top-k chunks by their exact chunk mass, but computing all chunk masses requires full QK computation. HiLS-Attention instead uses compressed chunk keys to estimate a chunk-mass surrogate and factorizes attention into inter-chunk and intra-chunk softmax, enabling end-to-end learning from the next-token prediction loss.*
 
