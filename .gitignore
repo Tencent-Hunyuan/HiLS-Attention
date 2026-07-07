@@ -5,6 +5,7 @@ wandb/*
 *.out
 *.log
 *.txt
+!requirements.txt
 **/logs/**
 **/speed/**
 **/devcodebook/**

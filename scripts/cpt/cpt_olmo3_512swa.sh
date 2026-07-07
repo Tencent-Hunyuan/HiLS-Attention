@@ -9,12 +9,12 @@ else
     export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
 fi
 
-export MODEL_CONFIG="configs/olmo3_7B/olmo3_512swa.json"
-export MODEL_PATH="../../checkpoints/olmo3_512swa"
-export CORPUS_PATH="../../data/dolma3_mix-6T-1025-500B/"
-export MAX_SEQ_LEN=8192
-export WANDB_NAME="olmo3_512swa"
-export OUTPUT_DIR="../../checkpoints/olmo3_512swa"
+export MODEL_CONFIG="${MODEL_CONFIG:-configs/olmo3_7B/olmo3_512swa.json}"
+export MODEL_PATH="${MODEL_PATH:-../../checkpoints/olmo3_512swa}"
+export CORPUS_PATH="${CORPUS_PATH:-../../data/dolma3_mix-6T-1025-500B/}"
+export MAX_SEQ_LEN="${MAX_SEQ_LEN:-8192}"
+export WANDB_NAME="${WANDB_NAME:-olmo3_512swa}"
+export OUTPUT_DIR="${OUTPUT_DIR:-../../checkpoints/olmo3_512swa}"
 export TOKEN_CNT=500_000_000_000
 export BATCH_SIZE=4
 export GLOBAL_BATCH_SIZE=512

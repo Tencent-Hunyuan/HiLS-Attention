@@ -18,15 +18,15 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
 
-export MODEL_CONFIG="configs/olmo3_7B/olmo3_8KA2K_lmk_token_tuning.json"
+export MODEL_CONFIG="${MODEL_CONFIG:-configs/olmo3_7B/olmo3_8KA2K_lmk_token_tuning.json}"
 
-CEPH_MODEL_PATH="../../checkpoints/olmo3_8KA2K_lmk_token_tuning"
-export LOAD_CHECKPOINT_PATH=""
-export MODEL_PATH="${CEPH_MODEL_PATH}"
-export CORPUS_PATH="../../data/dolma3_mix-6T-1025-500B/"
-export MAX_SEQ_LEN=8192
-export WANDB_NAME="olmo3_8KA2K_lmk_token_tuning"
-export OUTPUT_DIR="../../checkpoints/olmo3_8KA2K_lmk_token_tuning"
+CEPH_MODEL_PATH="${CEPH_MODEL_PATH:-../../checkpoints/olmo3_8KA2K_lmk_token_tuning}"
+export LOAD_CHECKPOINT_PATH="${LOAD_CHECKPOINT_PATH:-}"
+export MODEL_PATH="${MODEL_PATH:-${CEPH_MODEL_PATH}}"
+export CORPUS_PATH="${CORPUS_PATH:-../../data/dolma3_mix-6T-1025-500B/}"
+export MAX_SEQ_LEN="${MAX_SEQ_LEN:-8192}"
+export WANDB_NAME="${WANDB_NAME:-olmo3_8KA2K_lmk_token_tuning}"
+export OUTPUT_DIR="${OUTPUT_DIR:-../../checkpoints/olmo3_8KA2K_lmk_token_tuning}"
 export TOKEN_CNT=500_000_000_000
 export BATCH_SIZE=4
 export GLOBAL_BATCH_SIZE=512
