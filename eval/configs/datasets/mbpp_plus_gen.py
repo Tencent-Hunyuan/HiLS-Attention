@@ -75,7 +75,7 @@ mbpp_plus_datasets = [
     dict(
         type=MBPPPlusEvalPlusDataset,
         abbr='mbpp_plus',
-        path='/InfiniteLongLM/data/mbpp_plus/mbpp_plus.jsonl',
+        path='../../data/mbpp_plus/mbpp_plus.jsonl',
         reader_cfg=mbpp_plus_reader_cfg,
         infer_cfg=mbpp_plus_infer_cfg,
         eval_cfg=mbpp_plus_eval_cfg)

@@ -609,6 +609,21 @@ def flex_attn_bwd(
 # ---------------------------------------------------------------------------
 # Autograd Function
 # ---------------------------------------------------------------------------
+def _as_standard_blhd(t: torch.Tensor) -> torch.Tensor:
+    """Ensure (B, L, H, D) layout with strides expected by TileLang kernels.
+
+    During autoregressive decode (Lq=1), transpose+``.contiguous()`` can be a
+    no-op because size-1 dims are ignored in PyTorch's contiguity check, leaving
+    stride[1]==D instead of H*D and tripping the kernel stride assertion.
+    """
+    _, _, h, d = t.shape
+    if t.stride(1) == h * d and t.stride(2) == d and t.stride(3) == 1:
+        return t
+    dst = torch.empty(t.shape, device=t.device, dtype=t.dtype)
+    dst.copy_(t)
+    return dst
+
+
 class _FlexAttnTL(torch.autograd.Function):
 
     @staticmethod
@@ -628,6 +643,11 @@ class _FlexAttnTL(torch.autograd.Function):
 
         block_M = 64
         block_N = 64
+
+        if use_cache:
+            q_blhd = _as_standard_blhd(q_blhd)
+            k_blhd = _as_standard_blhd(k_blhd)
+            v_blhd = _as_standard_blhd(v_blhd)
 
         mod = flex_attn_fwd(
             BATCH, H, Q_LEN, KV_LEN, D_QK, D_V,
@@ -1169,6 +1189,11 @@ class _FlexAttnTLTwoPhase(torch.autograd.Function):
 
         block_M = 128
         block_N = 64
+
+        if use_cache:
+            q_blhd = _as_standard_blhd(q_blhd)
+            k_blhd = _as_standard_blhd(k_blhd)
+            v_blhd = _as_standard_blhd(v_blhd)
 
         mod = flex_attn_fwd(
             BATCH, H, Q_LEN, KV_LEN, D_QK, D_V,

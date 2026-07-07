@@ -11,4 +11,4 @@ huggingface-cli download \
     --repo-type dataset \
     --local-dir "$SAVE_DIR" \
     --resume-download \
-    --token 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
+    --token $hf_token

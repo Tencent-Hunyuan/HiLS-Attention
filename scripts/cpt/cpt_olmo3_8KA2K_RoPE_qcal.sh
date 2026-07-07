@@ -18,20 +18,20 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
 
-export MODEL_CONFIG="configs/olmo3_7B/olmo3_8KA2K_RoPE_LoRA.json"
+export MODEL_CONFIG="configs/olmo3_7B/olmo3_8KA2K_RoPE_qcal.json"
 
-export HF_CKPT="../../checkpoints/olmo3_8KA2K_RoPE_LoRA/pytorch_model.bin"
+export HF_CKPT="../../checkpoints/olmo3_8KA2K_RoPE_qcal/pytorch_model.bin"
 export MODEL_PATH="${HF_CKPT}"
 export LOAD_CHECKPOINT_PATH=""
 
 export CORPUS_PATH="../../data/dolma3_mix-6T-1025-500B/"
 export MAX_SEQ_LEN=8192
-export WANDB_NAME="olmo3_8KA2K_RoPE_LoRA"
-export OUTPUT_DIR="../../checkpoints/olmo3_8KA2K_RoPE_LoRA"
+export WANDB_NAME="olmo3_8KA2K_RoPE_qcal"
+export OUTPUT_DIR="../../checkpoints/olmo3_8KA2K_RoPE_qcal"
 export TOKEN_CNT=500_000_000_000
 export BATCH_SIZE=4
 export GLOBAL_BATCH_SIZE=512
-export TRAINING_RECIPE="configs/olmo3_7B/training_recipe_64gpu.yaml"
+export TRAINING_RECIPE="configs/olmo3_7B/training_recipe.yaml"
 export MAX_LR=2e-4
 export MIN_LR=2e-5
 export MAX_STEPS=13000

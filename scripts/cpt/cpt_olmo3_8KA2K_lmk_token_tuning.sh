@@ -30,7 +30,7 @@ export OUTPUT_DIR="../../checkpoints/olmo3_8KA2K_lmk_token_tuning"
 export TOKEN_CNT=500_000_000_000
 export BATCH_SIZE=4
 export GLOBAL_BATCH_SIZE=512
-export TRAINING_RECIPE="configs/olmo3_7B/training_recipe_64gpu.yaml"
+export TRAINING_RECIPE="configs/olmo3_7B/training_recipe.yaml"
 export MAX_LR=2e-4
 export MIN_LR=2e-5
 export MAX_STEPS=1_192  # ~10B tokens (512 * 8192 = 4,194,304 tokens/step)
