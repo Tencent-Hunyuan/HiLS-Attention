@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 import torch
 import argparse
@@ -38,6 +39,24 @@ def get_err_ratio(x, y):
     base = (x).flatten().square().mean().sqrt().item()
     return err / base
 
+
+def get_config_flag(config_path, key, default=False):
+    if not config_path or not os.path.exists(config_path):
+        return default
+    with open(config_path, "r", encoding="utf-8") as fin:
+        return json.load(fin).get(key, default)
+
+
+def resolve_ruler_preprocess_args(args):
+    config_insert_lmk = bool(get_config_flag(args.config_path, "insert_landmarks", False))
+    config_adjust_lmk_pos = bool(get_config_flag(args.config_path, "adjust_lmk_pos", False))
+
+    if config_insert_lmk or config_adjust_lmk_pos:
+        args.insert_lmk = True
+    if config_adjust_lmk_pos:
+        args.adjust_lmk_pos = True
+
+
 def assert_close(prefix, ref, tri, ratio):
     msg = f"{prefix} diff: {get_abs_err(ref, tri):.6f} ratio: {get_err_ratio(ref, tri):.6f}"
     print(msg)
@@ -54,6 +73,7 @@ from utils.landmark_utils import insert_special_tokens, create_position_ids_with
 
 
 def main(args):
+    resolve_ruler_preprocess_args(args)
     
     if args.tp_size > 1:
         dist.init_process_group(backend='nccl')
@@ -353,9 +373,15 @@ def main(args):
 if __name__ == "__main__":
     cmd = argparse.ArgumentParser('RULER Evaluation')
     cmd.add_argument('--config_path', required=True, type=str, help='Path to model config')
-    cmd.add_argument('--vocab_dir', required=True, type=str, help='Path to tokenizer vocab')
+    cmd.add_argument(
+        '--vocab_dir',
+        required=False,
+        type=str,
+        default='configs/olmo3_vocab',
+        help='Tokenizer directory. Defaults to the bundled OLMo3 tokenizer; this does not need to be an HF checkpoint.',
+    )
     cmd.add_argument('--corpus_path', required=True, type=str, help='Path to tokenized numpy corpus')
-    cmd.add_argument('--checkpoint_path', required=False, type=str, default=None, help='Path to checkpoint')
+    cmd.add_argument('--checkpoint_path', required=False, type=str, default=None, help='Path to DCP checkpoint')
     cmd.add_argument('--task_id', type=int, default=0, choices=[0, 1, 2, 3, 4, 5],
                      help='Task ID: 0=Single NIAH, 1=Multi Query, 2=Variable Tracking, 3=FWE, 4=PMVL, 5=PCVL')
     cmd.add_argument('--max_seq_len', type=int, default=8192, help='Max sequence length')

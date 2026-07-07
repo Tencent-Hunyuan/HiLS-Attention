@@ -1,26 +1,9 @@
 """
-Tilelang implementation of flex_attn used in HiLS layers.
+Flex Attention
+=====================
+TileLang implementation of the HiLS-Attention flex attention kernel.
 
-Replaces utils/flex_attn.py's flex_attention call. Two boolean flags control
-the mask semantics directly inside the kernel (no Python-side mask tensor):
-
-- mask_lmk:        if True, mask out landmark token columns where (kv_abs_idx + 1) % chunk_size == 0
-- expand_to_chunk: if True, sliding window left edge is expanded to the start of the chunk
-                   that contains (q_abs_idx - window_size + 1)
-
-Layout convention used by the public API and kernels:
-    q: (B, Lq, H_q, D_qk)
-    k: (B, Lk, H_kv, D_qk)
-    v: (B, Lk, H_kv, D_v)
-    -> o:   (B, Lq, H_q, D_v)
-       lse: (B, Lq, H_q)        (natural log)
-
-Forward kernel fuses training (Lq == Lk) and inference (Lq <= Lk) by accepting
-dynamic q_len / kv_len via T.dynamic when use_cache=True.
-
-Backward kernel uses swizzled dQ accumulation and split dK/dV buffers, training
-only (use_cache must be False during backward, which matches inference where no
-gradient is required).
+Author: Xinyu Wei
 """
 
 import torch

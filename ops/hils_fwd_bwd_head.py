@@ -1,3 +1,11 @@
+"""
+HiLS Sparse Attention
+======================================
+TileLang implementation of the HiLS-Attention sparse attention kernel.
+
+Author: Xinyu Wei
+"""
+
 import torch
 import math
 import logging

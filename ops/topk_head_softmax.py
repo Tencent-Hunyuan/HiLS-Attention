@@ -1,3 +1,11 @@
+"""
+Top-K Chunk Selection
+==============================
+TileLang implementation of the HiLS-Attention chunk selection kernel.
+
+Author: Xinyu Wei
+"""
+
 import torch
 import tilelang
 import tilelang.language as T

@@ -115,6 +115,20 @@ def get_config_flag(config_path, key, default=False):
         return json.load(fin).get(key, default)
 
 
+def resolve_ppl_preprocess_args(args):
+    if not args.config_path or not os.path.exists(args.config_path):
+        return
+
+    args.chunk_size = int(get_config_flag(args.config_path, "chunk_size", args.chunk_size))
+    config_insert_lmk = bool(get_config_flag(args.config_path, "insert_landmarks", False))
+    config_adjust_lmk_pos = bool(get_config_flag(args.config_path, "adjust_lmk_pos", False))
+
+    if config_insert_lmk or config_adjust_lmk_pos:
+        args.insert_lmk = True
+    if config_adjust_lmk_pos:
+        args.adjust_lmk_pos = True
+
+
 def resolve_segment_size(args):
     if get_config_flag(args.config_path, "use_naive_bsa", False):
         return -1
@@ -378,6 +392,7 @@ def _answer_len_for_chunk_prefill(
 ):
     if eval_last_k_tokens > 0:
         if insert_lmk:
+            raw_last_k_tokens = min(raw_last_k_tokens, orig_seq_len)
             orig_answer_start = orig_seq_len - raw_last_k_tokens
             answer_start_with_lmk = orig_answer_start + (orig_answer_start // (chunk_size - 1))
             return seq_len - answer_start_with_lmk
@@ -570,6 +585,7 @@ def run_ppl_forward(
 
 
 def main(args):
+    resolve_ppl_preprocess_args(args)
     device, tp_size, use_hf_tp, use_veomni_tp = setup_runtime(args)
     segment_size = resolve_segment_size(args)
     use_chunk_prefill = segment_size > 0
@@ -579,6 +595,11 @@ def main(args):
         print("NaiveBSA does not support KV cache; chunk prefill disabled (full inference)")
 
     print(f"Max Sequence Length for Evaluation: {args.max_seq_len}")
+    print(
+        "PPL preprocessing: "
+        f"chunk_size={args.chunk_size}, insert_lmk={args.insert_lmk}, "
+        f"adjust_lmk_pos={args.adjust_lmk_pos}"
+    )
     if tp_size > 1:
         print(f"Parallel mode: TP={tp_size}, full forward (chunk prefill disabled)")
     else:
@@ -623,6 +644,16 @@ def main(args):
                 inputs[key] = value.to(input_device)
 
         batch = prepare_ppl_batch(inputs["input_ids"], args, tokenizer, input_device)
+        if steps == 1:
+            raw_k = min(args.last_k_tokens, batch["orig_seq_len"]) if args.last_k_tokens > 0 else args.last_k_tokens
+            print(
+                "Last-k tokens: "
+                f"raw={args.last_k_tokens}, raw_clipped={raw_k}, "
+                f"effective={batch['eval_last_k_tokens']}, "
+                f"insert_lmk={args.insert_lmk}, "
+                f"orig_seq_len={batch['orig_seq_len']}, "
+                f"input_seq_len={batch['input_ids'].shape[1]}"
+            )
         loss, _ = run_ppl_forward(model, batch, args, input_device, segment_size=segment_size)
 
         loss_accum.add(loss.item())
@@ -646,14 +677,25 @@ def main(args):
 if __name__ == "__main__":
     cmd = argparse.ArgumentParser("NCR pretraining setup")
     cmd.add_argument("--config_path", required=False, type=str, default=None)
-    cmd.add_argument("--vocab_dir", required=True, type=str)
+    cmd.add_argument(
+        "--vocab_dir",
+        required=False,
+        type=str,
+        default="configs/olmo3_vocab",
+        help="Tokenizer directory. Defaults to the bundled OLMo3 tokenizer; this does not need to be an HF checkpoint.",
+    )
     cmd.add_argument("--data_path", required=True, type=str, help="path to the training corpus")
     cmd.add_argument("--max_seq_len", default=16384, type=int)
     cmd.add_argument("--chunk_size", default=64, type=int)
     cmd.add_argument("--insert_lmk", action="store_true")
     cmd.add_argument("--checkpoint_path", required=False, type=str, help="directory of the checkpoints")
     cmd.add_argument("--use_cache", action="store_true")
-    cmd.add_argument("--last_k_tokens", type=int, default=-1)
+    cmd.add_argument(
+        "--last_k_tokens",
+        type=int,
+        default=-1,
+        help="Number of raw tokens for tail-loss evaluation; LMK tokens are included automatically when --insert_lmk is set.",
+    )
     cmd.add_argument(
         "--enable_chunk_prefill",
         action="store_true",

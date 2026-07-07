@@ -18,16 +18,16 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
 
-export MODEL_CONFIG="configs/olmo3_7B/olmo3_8KA2K_NoPE_qcal.json"
+export MODEL_CONFIG="${MODEL_CONFIG:-configs/olmo3_7B/olmo3_8KA2K_NoPE_qcal.json}"
 
-export HF_CKPT="../../checkpoints/olmo3_8KA2K_NoPE_qcal/pytorch_model.bin"
-export MODEL_PATH="${HF_CKPT}"
-export LOAD_CHECKPOINT_PATH=""
+export HF_CKPT="${HF_CKPT:-../../checkpoints/olmo3_8KA2K_NoPE_qcal/pytorch_model.bin}"
+export MODEL_PATH="${MODEL_PATH:-${HF_CKPT}}"
+export LOAD_CHECKPOINT_PATH="${LOAD_CHECKPOINT_PATH:-}"
 
-export CORPUS_PATH="../../data/dolma3_mix-6T-1025-500B/"
-export MAX_SEQ_LEN=8192
-export WANDB_NAME="olmo3_8KA2K_NoPE_qcal"
-export OUTPUT_DIR="../../checkpoints/olmo3_8KA2K_NoPE_qcal"
+export CORPUS_PATH="${CORPUS_PATH:-../../data/dolma3_mix-6T-1025-500B/}"
+export MAX_SEQ_LEN="${MAX_SEQ_LEN:-8192}"
+export WANDB_NAME="${WANDB_NAME:-olmo3_8KA2K_NoPE_qcal}"
+export OUTPUT_DIR="${OUTPUT_DIR:-../../checkpoints/olmo3_8KA2K_NoPE_qcal}"
 export TOKEN_CNT=500_000_000_000
 export BATCH_SIZE=4
 export GLOBAL_BATCH_SIZE=512
