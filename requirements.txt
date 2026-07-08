@@ -11,8 +11,8 @@ pandas==2.3.2
 pyyaml==6.0.3
 safetensors==0.6.2
 tokenizers==0.22.1
-tilelang==0.1.7.post2
-veomni==0.1.0
+tilelang @ git+https://github.com/tile-ai/tilelang.git@53ea96c6d8c02d0f4b51f3ce87236b0b2739ba6f
+veomni @ git+https://github.com/ByteDance-Seed/VeOmni.git@441e1b2483921e9cfe56c8d97541a23cb4b290a8
 tqdm==4.67.1
 transformers==4.57.3
 wandb==0.22.0
