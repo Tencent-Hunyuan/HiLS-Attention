@@ -634,4 +634,4 @@ class HiLSAttention(nn.Module):
 
 if is_liger_kernel_available():
     apply_rotary_pos_emb = liger_rotary_pos_emb
-    logger.info_rank0("Apply liger kernel to LHSA.")
+    logger.info_rank0("Apply liger kernel to HiLS.")

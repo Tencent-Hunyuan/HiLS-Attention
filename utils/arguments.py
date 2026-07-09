@@ -16,13 +16,6 @@ class RULERDataArguments(DataArguments):
         default="ruler",
         metadata={"help": "ruler_[ratio]."},
     )
-    enable_ruler_plus: bool = field(
-        default=False,
-        metadata={
-            "help": "If True, enable Ruler-Plus tasks (positional multi-value lookup "
-                    "and char-in-value lookup) in addition to the legacy 4 tasks."
-        },
-    )
     sort_files: bool = field(
         default=False,
         metadata={

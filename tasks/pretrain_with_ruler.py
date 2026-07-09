@@ -206,13 +206,7 @@ def main():
 
     logger.info_rank0("Prepare data")
     tokenizer = build_tokenizer(args.model.tokenizer_path)
-    ruler_synthesizer = RulerSynthesizer(
-        tokenizer,
-        enable_ruler_plus=args.data.enable_ruler_plus,
-    )
-    if args.data.enable_ruler_plus:
-        logger.info_rank0("[ruler] Ruler-Plus tasks enabled "
-                          "(positional multi-value & char-in-value lookup).")
+    ruler_synthesizer = RulerSynthesizer(tokenizer)
     transform = partial(
         synthesize_ruler_example,
         ruler_synthesizer=ruler_synthesizer,

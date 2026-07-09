@@ -22,7 +22,7 @@ def process_numpy_example(
 
 
 class RulerSynthesizer:
-    def __init__(self, tokenizer, vocab_low = 100, task_id=-1, enable_ruler_plus=False, **kwargs):
+    def __init__(self, tokenizer, vocab_low = 100, task_id=-1, **kwargs):
         self.tokenizer = tokenizer
         self._low = vocab_low
         self._high = tokenizer.vocab_size
@@ -46,7 +46,6 @@ class RulerSynthesizer:
         # self._fwe_wo_prefix_tempalte = "{context}\nQuestion: Do not provide any explanation. Please ignore the dots '....'. What are the three most frequently appeared words in the above coded text? [/INST] Answer: According to the coded text above, the three most frequently appeared words are:"
 
         self.task_id = task_id
-        self.enable_ruler_plus = enable_ruler_plus
         self.kwargs = kwargs
 
     def generate_single_niah(self, inputs, length=7):

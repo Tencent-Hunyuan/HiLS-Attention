@@ -15,7 +15,6 @@ bash train_dist.sh tasks/pretrain_with_ruler.py configs/training_recipes/pretrai
     --data.data_type $DATA_TYPE \
     --data.datasets_type olmo3 \
     --data.sort_files true \
-    --data.enable_ruler_plus true \
     --data.num_workers 16 \
     --train.init_device meta \
     --train.use_wandb true \
