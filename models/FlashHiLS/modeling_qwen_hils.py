@@ -696,8 +696,8 @@ class HiLSModel(Qwen3PreTrainedModel):
         if self.num_swa_layers > 0 and self.num_swa_layers != config.num_hidden_layers // 2:
             logger.warning_once("Recomment num_swa_layers to be half of num_hidden_layers")
 
-        from .hils_attention import HiLSAttention as LandmarkHSA_base
-        lmk_cls = LandmarkHSA_base
+        from .hils_attention import HiLSAttention
+        lmk_cls = HiLSAttention
 
         def layer_type(layer_idx: int):
             if layer_idx < self.num_swa_layers:

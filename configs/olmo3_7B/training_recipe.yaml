@@ -33,4 +33,4 @@ train:
   ckpt_manager: dcp
   save_steps: 100
   save_hf_weights: true
-  wandb_project: olmo3_lhsa_cpt
+  wandb_project: olmo3_HiLS_cpt

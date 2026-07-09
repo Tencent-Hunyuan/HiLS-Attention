@@ -691,7 +691,7 @@ class ChunkAttnPoolSharedKFunction(torch.autograd.Function):
 # =====================================================================
 
 def chunk_attn_pool_ref(mu_q, k_chunked, sm_scale=None):
-    """Pure PyTorch reference (from lhsa_layer.py)."""
+    """Pure PyTorch reference (from the HiLS layer)."""
     if sm_scale is None:
         sm_scale = 1.0 / math.sqrt(mu_q.shape[-1])
 
