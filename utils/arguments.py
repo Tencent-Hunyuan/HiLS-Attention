@@ -80,36 +80,6 @@ class CPTArguments(ExtendedTrainingArguments):
         default=None,
         metadata={"help": "freeze parameters by pattern."},
     )
-    hsa_topk_decay_start: Optional[int] = field(
-        default=None,
-        metadata={"help": "Runtime HSA topk at the beginning of training. Disabled when unset."},
-    )
-    hsa_topk_decay_end: Optional[int] = field(
-        default=None,
-        metadata={"help": "Runtime HSA topk after decay. Disabled when unset."},
-    )
-    hsa_topk_decay_steps: int = field(
-        default=0,
-        metadata={
-            "help": (
-                "Number of global optimizer steps used to decay HSA topk. "
-                "If <= 0, use the full training horizon."
-            )
-        },
-    )
-    hsa_topk_decay_granularity: int = field(
-        default=1,
-        metadata={
-            "help": (
-                "Round scheduled runtime HSA topk to this multiple. Larger values reduce "
-                "the number of distinct compiled topk kernels."
-            )
-        },
-    )
-    hsa_topk_decay_start_step: int = field(
-        default=0,
-        metadata={"help": "Global step offset before HSA topk decay starts."},
-    )
 
 
 @dataclass

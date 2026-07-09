@@ -1,11 +1,10 @@
 import json
-import math
 import os
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 from functools import partial
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import data
 import torch
@@ -109,66 +108,6 @@ def normalize_model_inputs(batch: Dict[str, Any]) -> Dict[str, Any]:
         else:
             normalized_batch[key] = value
     return normalized_batch
-
-
-def get_scheduled_hsa_topk(args, global_step: int) -> Optional[int]:
-    start_topk = getattr(args.train, "hsa_topk_decay_start", None)
-    end_topk = getattr(args.train, "hsa_topk_decay_end", None)
-    if start_topk is None or end_topk is None:
-        return None
-
-    start_topk = int(start_topk)
-    end_topk = int(end_topk)
-    if start_topk <= 0 or end_topk <= 0:
-        raise ValueError(f"hsa_topk_decay_start/end must be positive, got {start_topk}->{end_topk}")
-
-    start_step = int(getattr(args.train, "hsa_topk_decay_start_step", 0))
-    decay_steps = int(getattr(args.train, "hsa_topk_decay_steps", 0))
-    if decay_steps <= 0:
-        decay_steps = args.train.train_steps * args.train.num_train_epochs - start_step
-    decay_steps = max(decay_steps, 1)
-
-    elapsed = max(0, global_step - start_step - 1)
-    progress = min(1.0, elapsed / max(decay_steps - 1, 1))
-    raw_topk = start_topk + (end_topk - start_topk) * progress
-
-    # For a decreasing schedule, ceil keeps the receptive field from becoming
-    # sparser earlier than the continuous schedule.
-    if start_topk >= end_topk:
-        topk = math.ceil(raw_topk)
-    else:
-        topk = math.floor(raw_topk)
-
-    granularity = int(getattr(args.train, "hsa_topk_decay_granularity", 1))
-    if granularity > 1:
-        if start_topk >= end_topk:
-            topk = math.ceil(topk / granularity) * granularity
-        else:
-            topk = math.floor(topk / granularity) * granularity
-    topk = min(max(topk, min(start_topk, end_topk)), max(start_topk, end_topk))
-    return max(1, topk)
-
-
-def apply_scheduled_hsa_topk(model, topk: int) -> int:
-    updated_layers = 0
-    for module in model.modules():
-        if not (hasattr(module, "topk") and hasattr(module, "topk_func") and hasattr(module, "chunk_size")):
-            continue
-
-        layer_topk = int(topk)
-
-        if int(getattr(module, "topk")) == layer_topk:
-            continue
-
-        module.topk = layer_topk
-        if hasattr(module, "_alibi_bias_cache_key"):
-            module._alibi_bias_cache_key = None
-        if hasattr(module, "_alibi_bias_cache"):
-            module._alibi_bias_cache = None
-        if hasattr(module, "reinited"):
-            module.reinited = False
-        updated_layers += 1
-    return updated_layers
 
 
 def main():
@@ -410,16 +349,6 @@ def main():
                 f"{format_freeze_summary(freeze_summary)}"
             )
 
-    current_hsa_topk = get_scheduled_hsa_topk(args, global_step + 1)
-    if current_hsa_topk is not None:
-        updated_layers = apply_scheduled_hsa_topk(model, current_hsa_topk)
-        logger.info_rank0(
-            f"[hsa-topk] runtime schedule enabled: {args.train.hsa_topk_decay_start} -> "
-            f"{args.train.hsa_topk_decay_end}; initial runtime topk={current_hsa_topk} "
-            f"(granularity={args.train.hsa_topk_decay_granularity}) "
-            f"on {updated_layers} HSA layers. model_config.hils_topk remains {getattr(model_config, 'hils_topk', None)}."
-        )
-
     helper.empty_cache()
     model_fwd_context, model_bwd_context = build_activation_offloading_context(
         args.train.enable_activation_offload, args.train.enable_gradient_checkpointing, args.train.activation_gpu_limit
@@ -448,15 +377,6 @@ def main():
             except StopIteration:
                 logger.info(f"epoch:{epoch} Dataloader finished with drop_last {args.data.drop_last}")
                 break
-
-            scheduled_hsa_topk = get_scheduled_hsa_topk(args, global_step)
-            if scheduled_hsa_topk is not None and scheduled_hsa_topk != current_hsa_topk:
-                updated_layers = apply_scheduled_hsa_topk(model, scheduled_hsa_topk)
-                current_hsa_topk = scheduled_hsa_topk
-                logger.info_rank0(
-                    f"[hsa-topk][step {global_step}] runtime topk={current_hsa_topk} "
-                    f"updated on {updated_layers} HSA layers"
-                )
 
             if global_step == 1:
                 helper.print_example(example=micro_batches[0], rank=args.train.local_rank)
@@ -508,16 +428,13 @@ def main():
             train_metrics = environ_meter.step(delta_time, global_step=global_step)
 
             data_loader_tqdm.set_postfix_str(
-                f"loss: {total_loss:.4f}, grad_norm: {grad_norm:.4f}, lr: {lr:.2e}"
-                + (f", hsa_topk: {current_hsa_topk}" if current_hsa_topk is not None else ""),
+                f"loss: {total_loss:.4f}, grad_norm: {grad_norm:.4f}, lr: {lr:.2e}",
                 refresh=False,
             )
             data_loader_tqdm.update()
 
             if args.train.global_rank == 0:
                 if args.train.use_wandb:
-                    if current_hsa_topk is not None:
-                        train_metrics["training/hsa_topk"] = current_hsa_topk
                     train_metrics.update(
                         {"training/loss": total_loss, "training/grad_norm": grad_norm, "training/lr": lr}
                     )
