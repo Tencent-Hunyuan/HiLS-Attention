@@ -15,6 +15,14 @@ HiLS-Attention is a chunk-wise sparse attention mechanism that learns chunk sele
 
 *Figure: Overview of HiLS-Attention. Naive block sparse attention selects top-k chunks by their exact chunk mass, but computing all chunk masses requires full QK computation. HiLS-Attention instead uses compressed chunk keys to estimate a chunk-mass surrogate and factorizes attention into inter-chunk and intra-chunk softmax, enabling end-to-end learning from the next-token prediction loss.*
 
+## TODO / Roadmap
+
+We are actively working on releasing more resources. Stay tuned!
+
+- [x] Release training and evaluation code
+- [ ] Release pre-trained model checkpoints
+- [ ] Release SGLang inference code for efficient long-context serving
+
 ## Environment Setup
 
 ### Install via uv (recommended)
