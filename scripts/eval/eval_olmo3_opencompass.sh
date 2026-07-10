@@ -129,6 +129,7 @@ run_one() {
     local insert_lmk
     insert_lmk=$("$PYTHON_BIN" -c "import json,sys;c=json.load(open(sys.argv[1]));print('1' if c.get('insert_landmarks') or c.get('adjust_lmk_pos') else '0')" "$hils_config")
     cmd+=(--model-kwargs torch_dtype=torch.bfloat16 attn_implementation=flash_attention_3)
+    [ "$num_gpus" -eq 1 ] && cmd+=(device_map=cuda:0)
     [ "$insert_lmk" = "1" ] && cmd+=(auto_insert_lmk=True)
     [ "$DEBUG" = "1" ] && [ "$num_gpus" -eq 1 ] && cmd+=(--debug)
 
