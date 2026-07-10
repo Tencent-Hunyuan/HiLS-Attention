@@ -76,7 +76,6 @@ class RulerSynthesizer:
         numbers = list(range(0, org_len))
         rng.shuffle(numbers)
         indices = numbers[:len(needles)]
-        indices = sorted(indices)
         for idx in range(len(needles)):
             input_ids = np.insert(input_ids, indices[idx], needles[idx])
             for j in range(idx + 1, len(needles)):
