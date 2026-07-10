@@ -5,7 +5,7 @@ Drop-in attention module implementing the paper's naive BSA
 ``naive_bsa_kernel`` (or ``naive_bsa_attention`` when
 ``use_naive_bsa_torch_ref`` is set).
 
-Constraints: GQA-friendly, ``chunk_size >= 32``, ``hsa_topk`` preferably
+Constraints: GQA-friendly, ``chunk_size >= 32``, ``hils_topk`` preferably
 a power of 2, training-only (no KV cache), plain causal mask.
 """
 from __future__ import annotations
@@ -84,11 +84,11 @@ class NaiveBSA(nn.Module):
         self.k_norm = norm_cls(self.head_dim)
 
         self.chunk_size = config.chunk_size
-        self.topk = config.hsa_topk
-        self.hsa_sliding_window = getattr(
-            config, "hsa_sliding_window", config.sliding_window
+        self.topk = config.hils_topk
+        self.hils_sliding_window = getattr(
+            config, "hils_sliding_window", config.sliding_window
         )
-        self.apply_hsa_rope = getattr(config, "apply_hsa_rope", True)
+        self.apply_hils_rope = getattr(config, "apply_hils_rope", True)
         self.scaling = self.head_dim ** -0.5
         self.is_causal = True
 
@@ -147,7 +147,7 @@ class NaiveBSA(nn.Module):
         q = self.q_norm(q)
         k = self.k_norm(k)
 
-        if self.apply_hsa_rope:
+        if self.apply_hils_rope:
             q_bhld = q.transpose(1, 2)
             k_bhld = k.transpose(1, 2)
             q_bhld, k_bhld = apply_rotary_pos_emb(q_bhld, k_bhld, cos, sin)
@@ -160,7 +160,7 @@ class NaiveBSA(nn.Module):
         o = bsa_fn(
             q, k, v,
             chunk_size=self.chunk_size,
-            window_size=self.hsa_sliding_window,
+            window_size=self.hils_sliding_window,
             topk=self.topk,
             sm_scale=self.scaling,
         )

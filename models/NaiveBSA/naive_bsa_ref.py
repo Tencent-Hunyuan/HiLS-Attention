@@ -137,8 +137,8 @@ def naive_bsa_attention(
     s_local = s.masked_fill(~local_mask.view(1, 1, L, L), float("-inf"))
     lse_swa = torch.logsumexp(s_local, dim=-1)
 
-    lse_hsa = torch.logsumexp(log_Z_chunk, dim=-1)
-    lse_total = torch.logaddexp(lse_swa, lse_hsa)
+    lse_hils = torch.logsumexp(log_Z_chunk, dim=-1)
+    lse_total = torch.logaddexp(lse_swa, lse_hils)
     log_probs = log_Z_chunk - lse_total.unsqueeze(-1)
 
     if G == 1:

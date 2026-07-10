@@ -8,8 +8,6 @@ Masks (match ``naive_bsa_kernel.exact_chunk_log_z``):
 * remote-only: ``i_global < (c+1)*S + W - 1`` -> -inf
 * OOB:         ``i_global >= L`` or ``j_global >= L`` -> -inf
 """
-from __future__ import annotations
-
 from typing import Optional
 
 import torch
