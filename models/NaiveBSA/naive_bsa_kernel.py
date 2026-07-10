@@ -203,8 +203,8 @@ def naive_bsa_kernel(
     K_eff = min(K, N_chunk)
 
     # Group-shared top-K on softmax-normalized log-probs (max-pool over G).
-    lse_hsa = torch.logsumexp(log_Z, dim=-1)
-    lse_total = torch.logaddexp(lse_swa.to(log_Z.dtype), lse_hsa)
+    lse_hils = torch.logsumexp(log_Z, dim=-1)
+    lse_total = torch.logaddexp(lse_swa.to(log_Z.dtype), lse_hils)
     log_probs = log_Z - lse_total.unsqueeze(-1)
     if G == 1:
         score_pool = log_probs
@@ -237,7 +237,7 @@ def naive_bsa_kernel(
     indices_kv_i32 = indices_kv.to(torch.int32).contiguous()
 
     is_training = q.requires_grad or k.requires_grad or v.requires_grad
-    hsa_o = HiLS_block_M_head(
+    hils_o = HiLS_block_M_head(
         q.contiguous(), k.contiguous(), v.contiguous(),
         sparse_w, indices_kv_i32,
         block_size=S,
@@ -247,7 +247,7 @@ def naive_bsa_kernel(
         is_training=is_training,
     )
 
-    o = torch.addcmul(hsa_o.to(q.dtype), swa_o.to(q.dtype), swa_w)
+    o = torch.addcmul(hils_o.to(q.dtype), swa_o.to(q.dtype), swa_w)
 
     if return_aux:
         return o, {
