@@ -624,7 +624,12 @@ class _FlexAttnTL(torch.autograd.Function):
         D_V = v_blhd.shape[-1]
         groups = H // H_KV
 
-        block_M = 64
+        # block_M must be 128 (not 64): the forward attention output is only a
+        # bf16 reduction-order variation between the two, but the smaller tile
+        # perturbs every layer by ~1e-6 which compounds through 32 layers into a
+        # ~3e-3 logit shift (e.g. GPQA 34.34 -> 32.83). 128 matches the original
+        # kernel bit-for-bit.
+        block_M = 128
         block_N = 64
 
         if use_cache:
