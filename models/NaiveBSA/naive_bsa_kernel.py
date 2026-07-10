@@ -174,9 +174,9 @@ def naive_bsa_kernel(
     W = window_size
 
     swa_o, lse_swa = flex_attn_tl(
-        q.transpose(1, 2).contiguous(),
-        k.transpose(1, 2).contiguous(),
-        v.transpose(1, 2).contiguous(),
+        q.contiguous(),
+        k.contiguous(),
+        v.contiguous(),
         window_size=W,
         chunk_size=S,
         training=True,
