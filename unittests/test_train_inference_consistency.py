@@ -181,7 +181,7 @@ def run_generate_batch(model, tokenizer, prompts, device, max_new_tokens, paddin
         "use_cache": True,
     }
     if drop_attention_mask:
-        print("  [Repro] batched generate still passes attention_mask, but HSA forward will intentionally drop the decoder mask.")
+        print("  [Repro] batched generate still passes attention_mask, but HiLS forward will intentionally drop the decoder mask.")
 
     with torch.no_grad():
         output = model.generate(**generate_kwargs)
@@ -241,7 +241,7 @@ def run_forward_baseline_plain_batch(model, input_ids, attention_mask, generated
         }
     )
     if drop_attention_mask:
-        print("  [Repro] batched forward still passes attention_mask / position_ids, but HSA forward will intentionally drop the decoder mask.")
+        print("  [Repro] batched forward still passes attention_mask / position_ids, but HiLS forward will intentionally drop the decoder mask.")
 
     with torch.no_grad():
         outputs = model(**forward_kwargs)
@@ -567,7 +567,7 @@ def run_batched_consistency(model, tokenizer, prompts, device, args):
     saved_debug_drop_attention_mask = getattr(model_core.config, "debug_drop_attention_mask", False)
     model_core.config.debug_drop_attention_mask = bool(args.drop_attention_mask)
     if args.drop_attention_mask:
-        print("[Repro] debug_drop_attention_mask enabled: HSA forward will ignore the passed attention_mask.")
+        print("[Repro] debug_drop_attention_mask enabled: HiLS forward will ignore the passed attention_mask.")
 
     for batch_start in range(0, len(prompts), args.batch_size):
         batch_prompts = prompts[batch_start : batch_start + args.batch_size]
@@ -837,7 +837,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--drop_attention_mask", action="store_true",
-        help="For reproduction: when batch_size > 1, make HSA forward intentionally drop attention_mask before constructing the decoder mask",
+        help="For reproduction: when batch_size > 1, make HiLS forward intentionally drop attention_mask before constructing the decoder mask",
     )
     parser.add_argument(
         "--logit_tie_tolerance", type=float, default=0.5,

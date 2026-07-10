@@ -5,7 +5,7 @@ import torch
 import math
 from .HoPE import HoPERotaryEmbedding
 from torch import nn
-from .hils_attention import HiLSAttention as LandmarkHSA_base
+from .hils_attention import HiLSAttention
 from .configuration_hils import HiLSConfig
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache
@@ -647,14 +647,14 @@ class HiLSModel(Olmo3PreTrainedModel):
         self.embed_tokens = nn.Embedding(self.vocab_size, config.hidden_size, self.padding_idx)
         self.full_attn_interleave = config.full_attn_interleave
         self.num_swa_layers = getattr(config, "num_swa_layers", 0)
-        self.replace_full_attention_with_lhsa = getattr(config, "replace_full_attention_with_lhsa", True)
+        self.replace_full_attention_with_hils = getattr(config, "replace_full_attention_with_hils", True)
         self.chunk_size = getattr(config, 'chunk_size', 64)
-        from .hils_attention import HiLSAttention as LandmarkHSA_base
-        lmk_cls = LandmarkHSA_base
+        from .hils_attention import HiLSAttention
+        lmk_cls = HiLSAttention
 
         def layer_type(layer_idx: int):
             if (
-                self.replace_full_attention_with_lhsa
+                self.replace_full_attention_with_hils
                 and self.full_attn_interleave > 0
                 and layer_idx >= self.num_swa_layers
                 and ((layer_idx - self.num_swa_layers) % self.full_attn_interleave == self.full_attn_interleave - 1)
@@ -887,7 +887,7 @@ class HiLSForCausalLM(Olmo3PreTrainedModel, GenerationMixin):
 
         last_token = input_ids[:, -1:]
         # DynamicCache.get_seq_length() reports the first layer's cache length.
-        # In LHSA models that layer may be sliding-window attention and can be
+        # In HiLS models that layer may be sliding-window attention and can be
         # truncated, while generation bookkeeping needs the full LMK-inserted
         # cache length. Track that length explicitly in GenerateState.
         if gs.cache_seq_len > 0:

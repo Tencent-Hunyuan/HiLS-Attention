@@ -3,15 +3,15 @@
 Usage:
     python utils/convert_basemodel_to_hils.py \
         --base_path /path/to/olmo3_base_model \
-        --target_config configs/olmo3_7B/olmo3_lhsa_interleave_8KA2K_non_unified.json \
+        --target_config /path/to/olmo3_base_model/config.json \
         --output_path /path/to/output/converted_model.pt \
         [--log_path /path/to/log.json]
 
 Flow:
   1. Load src_sd from base model checkpoint.
-  2. Load target HSA config, identify HSA layers.
-  3. Directly transform src_sd into converted_sd using the current LHSA key layout.
-  4. Create HSA model, pad vocab weights, and save converted_sd.
+  2. Load target HiLS config, identify HiLS layers.
+  3. Directly transform src_sd into converted_sd using the current HiLS key layout.
+  4. Create HiLS model, pad vocab weights, and save converted_sd.
   5. Load converted_sd with strict=False, report missing keys.
 """
 
@@ -80,19 +80,19 @@ def load_config_dict_from_path(path: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 2. Identify HSA layers from config
+# 2. Identify HiLS layers from config
 # ---------------------------------------------------------------------------
 
-def get_lhsa_layer_indices(config: Dict[str, Any]) -> List[int]:
-    """Determine which layers are LHSA (HSA) layers based on config.
+def get_hils_layer_indices(config: Dict[str, Any]) -> List[int]:
+    """Determine which layers are HiLS layers based on config.
 
-    HSA layers are determined by:
-      - replace_full_attention_with_lhsa must be true (default true)
+    HiLS layers are determined by:
+      - replace_full_attention_with_hils must be true (default true)
       - full_attn_interleave > 0
       - layer_idx >= num_swa_layers
       - (layer_idx - num_swa_layers) % full_attn_interleave == full_attn_interleave - 1
     """
-    replace = config.get("replace_full_attention_with_lhsa", True)
+    replace = config.get("replace_full_attention_with_hils", True)
     if not replace:
         return []
     n_layers = config["num_hidden_layers"]
@@ -153,18 +153,18 @@ def build_converted_sd(
     src_sd: Dict[str, torch.Tensor],
     target_config: Dict[str, Any],
     src_config: Dict[str, Any],
-    lhsa_indices: List[int],
+    hils_indices: List[int],
 ) -> Tuple[Dict[str, torch.Tensor], List[Dict[str, Any]]]:
     """Build converted state dict directly from source state dict.
 
-    For non-HSA keys: normalize key prefix and copy tensor as-is.
+    For non-HiLS keys: normalize key prefix and copy tensor as-is.
     For current HiLS layers: copy base q/k/v/o_proj directly; names and shapes match.
 
     New HiLS-only parameters such as lmk_q_proj and lmk_q_norm have no
     base-model source and are intentionally left randomly initialized.
     """
     converted_sd: Dict[str, torch.Tensor] = {}
-    lhsa_set = set(lhsa_indices)
+    hils_set = set(hils_indices)
     hils_layer_logs: List[Dict[str, Any]] = []
 
     # Normalize all source keys first
@@ -179,16 +179,16 @@ def build_converted_sd(
     src_tie = bool(src_config.get("tie_word_embeddings", False))
 
     for nk, tensor in normalized_src.items():
-        # Check if this key belongs to an LHSA layer's self_attn q/k/v/o_proj
+        # Check if this key belongs to a HiLS layer's self_attn q/k/v/o_proj
         layer_idx = _extract_layer_idx(nk)
-        if layer_idx is not None and layer_idx in lhsa_set:
+        if layer_idx is not None and layer_idx in hils_set:
             suffix = _extract_attn_suffix(nk)
             if suffix is not None:
-                # This key is an attention projection in an LHSA layer.
-                # It will be handled in the LHSA conversion pass below.
+                # This key is an attention projection in a HiLS layer.
+                # It will be handled in the HiLS conversion pass below.
                 continue
 
-        # Non-HSA key: copy directly
+        # Non-HiLS key: copy directly
         converted_sd[nk] = tensor
 
     # Handle tie_word_embeddings: create lm_head.weight if needed
@@ -211,8 +211,8 @@ def build_converted_sd(
                     print(f"  [tie_word_embeddings] Created lm_head.weight from {nk_embed}")
                     break
 
-    # Convert LHSA layers
-    for layer_idx in lhsa_indices:
+    # Convert HiLS layers
+    for layer_idx in hils_indices:
         prefix = f"model.layers.{layer_idx}.self_attn."
 
         # Find source q/k/v/o_proj for this layer
@@ -223,7 +223,7 @@ def build_converted_sd(
 
         if src_q is None or src_k is None or src_v is None or src_o is None:
             raise KeyError(
-                f"Cannot find q/k/v/o_proj weights for LHSA layer {layer_idx}. "
+                f"Cannot find q/k/v/o_proj weights for HiLS layer {layer_idx}. "
                 f"Available keys with this prefix: "
                 f"{[k for k in normalized_src if k.startswith(prefix)]}"
             )
@@ -363,35 +363,35 @@ def main():
     src_config = load_config_dict_from_path(args.base_path)
     print(f"       Source keys: {len(src_sd)}")
 
-    # ---- Step 2: Load target config & identify HSA layers ----
-    print(f"[2/5] Loading target HSA config from: {args.target_config}")
+    # ---- Step 2: Load target config & identify HiLS layers ----
+    print(f"[2/5] Loading target HiLS config from: {args.target_config}")
     with open(args.target_config, "r", encoding="utf-8") as f:
         target_config = json.load(f)
 
-    lhsa_indices = get_lhsa_layer_indices(target_config)
+    hils_indices = get_hils_layer_indices(target_config)
 
-    if lhsa_indices:
-        print(f"       HSA layers: {lhsa_indices}")
+    if hils_indices:
+        print(f"       HiLS layers: {hils_indices}")
         print("       Mode: direct_qkv_reuse")
     else:
-        print("       No HSA layers (all pure Olmo3Attention)")
+        print("       No HiLS layers (all pure Olmo3Attention)")
 
     # ---- Step 3: Build converted_sd directly from src_sd ----
     print(f"[3/5] Converting weights (directly from src_sd, no dst model needed)...")
     converted_sd, hils_layer_logs = build_converted_sd(
-        src_sd, target_config, src_config, lhsa_indices,
+        src_sd, target_config, src_config, hils_indices,
     )
     print(f"       Converted keys: {len(converted_sd)}")
 
     if hils_layer_logs:
-        print(f"       HSA layer conversion details:")
+        print(f"       HiLS layer conversion details:")
         for entry in hils_layer_logs:
             print(f"         Layer {entry['layer_idx']}: mode={entry['mode']}")
 
     # ---- Step 4: Pad vocab / init external lmk_embed & save converted state dict ----
-    # Create HSA model first to get the actual parameter layout.
+    # Create HiLS model first to get the actual parameter layout.
     enable_external_lmk_embed = bool(target_config.get("enable_external_lmk_embed", False))
-    print(f"[4/5] Creating HSA model, preparing vocab/lmk weights, and saving...")
+    print(f"[4/5] Creating HiLS model, preparing vocab/lmk weights, and saving...")
     print(f"       enable_external_lmk_embed={enable_external_lmk_embed}")
     model = build_foundation_model(config_path=args.target_config)
 
@@ -446,8 +446,8 @@ def main():
     torch.save(converted_sd, args.output_path)
     print(f"       Done. File size: {os.path.getsize(args.output_path) / 1e9:.2f} GB")
 
-    # ---- Step 5: Load converted_sd into HSA model, verify missing keys ----
-    print(f"[5/5] Loading converted state dict into HSA model for verification...")
+    # ---- Step 5: Load converted_sd into HiLS model, verify missing keys ----
+    print(f"[5/5] Loading converted state dict into HiLS model for verification...")
 
     load_result = model.load_state_dict(converted_sd, strict=False)
 
@@ -457,7 +457,7 @@ def main():
     print(f"\n{'='*60}")
     print(f"Verification Summary:")
     print(f"  Total keys in converted_sd : {len(converted_sd)}")
-    print(f"  Total keys in HSA model    : {len(model.state_dict())}")
+    print(f"  Total keys in HiLS model    : {len(model.state_dict())}")
     print(f"  Missing keys (random init) : {len(missing_keys)}")
     print(f"  Unexpected keys (unused)   : {len(unexpected_keys)}")
     print(f"{'='*60}")

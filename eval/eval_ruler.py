@@ -134,7 +134,6 @@ def main(args):
     ruler_synthesizer = RulerSynthesizer(
         tokenizer,
         task_id=args.task_id,
-        enable_ruler_plus=args.enable_ruler_plus or args.task_id in (4, 5),
         **task_kwargs,
     )
     
@@ -157,8 +156,6 @@ def main(args):
         1: "Multi Query",
         2: "Variable Tracking",
         3: "FWE",
-        4: "PMVL",
-        5: "PCVL",
     }
     task_name = task_names.get(args.task_id, f"Task {args.task_id}")
 
@@ -382,8 +379,8 @@ if __name__ == "__main__":
     )
     cmd.add_argument('--corpus_path', required=True, type=str, help='Path to tokenized numpy corpus')
     cmd.add_argument('--checkpoint_path', required=False, type=str, default=None, help='Path to DCP checkpoint')
-    cmd.add_argument('--task_id', type=int, default=0, choices=[0, 1, 2, 3, 4, 5],
-                     help='Task ID: 0=Single NIAH, 1=Multi Query, 2=Variable Tracking, 3=FWE, 4=PMVL, 5=PCVL')
+    cmd.add_argument('--task_id', type=int, default=0, choices=[0, 1, 2, 3],
+                     help='Task ID: 0=Single NIAH, 1=Multi Query, 2=Variable Tracking, 3=FWE')
     cmd.add_argument('--max_seq_len', type=int, default=8192, help='Max sequence length')
     cmd.add_argument('--segment_size', type=int, default=4096, help='Segment size for chunk prefill. Set to 0 or negative to disable chunk prefill (full inference)')
     cmd.add_argument('--insert_lmk', action='store_true', help='Insert landmark tokens for HiLS model')
@@ -395,7 +392,6 @@ if __name__ == "__main__":
     cmd.add_argument('--num_queries', type=int, default=-1, help='Number of queries for MQ task')
     cmd.add_argument('--tp_size', type=int, default=1, help='Tensor Parallel size (1=single GPU, >1=multi-GPU TP)')
     cmd.add_argument('--adjust_lmk_pos', action='store_true', help='Adjust position ids for landmarks')
-    cmd.add_argument('--enable_ruler_plus', action='store_true', help='Enable Ruler-Plus tasks')
     
     
     args = cmd.parse_args()

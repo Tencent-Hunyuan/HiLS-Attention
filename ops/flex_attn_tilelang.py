@@ -817,8 +817,7 @@ def flex_attn_bwd_dq(
             # ds is staged to shared (no intermediate bf16 fragment): the
             # `T.copy(ds, ds_shared)` performs the fp32->bf16 cast implicitly,
             # and using shared as GEMM-A keeps layout inference unambiguous
-            # and matches the ldmatrix path used by mma. Pattern borrowed
-            # from `hsa_fwd_bwd_single_tilelang.py::bwd_dq_dw`.
+            # and matches the ldmatrix path used by mma.
             ds_shared = T.alloc_shared([block_M, block_N], dtype)
 
             dq = T.alloc_fragment([block_M, dim_qk], accum_dtype)
@@ -926,8 +925,7 @@ def flex_attn_bwd_dq(
 
                 # dq += ds @ K   (route ds through shared directly, skipping
                 # the intermediate bf16 fragment; the copy fp32_frag -> bf16_shared
-                # casts implicitly. Mirrors `bwd_dq_dw` from
-                # `hsa_fwd_bwd_single_tilelang.py`.)
+                # casts implicitly. 
                 T.copy(ds, ds_shared)
                 T.gemm(ds_shared, K_shared, dq, policy=T.GemmWarpPolicy.FullRow)
 
@@ -1020,8 +1018,7 @@ def flex_attn_bwd_dkdv(
             dsT = T.alloc_fragment([block_M, block_N], accum_dtype)
             # Stage qkT and dsT to shared (fp32_frag -> bf16_shared) instead
             # of going through bf16 fragments. Both shared buffers are then
-            # used as GEMM-A. Pattern from `bwd_dkdv` in
-            # `hsa_fwd_bwd_single_tilelang.py`.
+            # used as GEMM-A.
             qkT_shared = T.alloc_shared([block_M, block_N], dtype)
             dsT_shared = T.alloc_shared([block_M, block_N], dtype)
 
@@ -1518,7 +1515,6 @@ _REGRESSION_CASES = [
 ("infer_decode_q2_noexp_lmk",      dict(training=False, seq_len=1024, q_len_inf=2, window_size=512, chunk_size=64, mask_lmk=True, expand_to_chunk=False)),
 
 
-    # ---- short sequence below one chunk: matches HSA PPL L=32 fallback path ----
     ("train_L32_lt_chunk_lmk_expand", dict(
         training=True, seq_len=16, window_size=512, chunk_size=64,
         heads_q=16, heads_kv=2, dim_qk=64, dim_v=64,
@@ -1542,7 +1538,7 @@ _REGRESSION_CASES = [
     # ("train_misaligned_gqa",      dict(training=True, seq_len=333, heads_q=16, heads_kv=4,
     #                                     window_size=128, chunk_size=64,
     #                                     mask_lmk=True, expand_to_chunk=False)),
-    # # head_dim=64 (matches production config_hsa_testnan.json)
+    # # head_dim=64
     # ("train_misaligned_hd64",     dict(training=True, seq_len=333, dim_qk=64, dim_v=64,
     #                                     window_size=128, chunk_size=64,
     #                                     mask_lmk=True, expand_to_chunk=False)),
@@ -1646,8 +1642,7 @@ def _run_case(
     if training:
         # Build shared do / dlse, then mask out fully-masked rows on BOTH
         # paths to avoid NaN propagation. dlse is non-zero so the bwd kernel
-        # actually exercises the dlse-fold-into-Delta path (lhsa_layer feeds
-        # lse into a downstream softmax in real training).
+        # actually exercises the dlse-fold-into-Delta path.
         do = torch.randn_like(o_tl)
         dlse_full = torch.randn_like(lse_tl)
         with torch.no_grad():

@@ -21,22 +21,8 @@ def process_numpy_example(
     return [data_dict]
 
 
-_ORDINAL_WORDS = [
-    "first", "second", "third", "fourth", "fifth",
-    "sixth", "seventh", "eighth", "ninth", "tenth",
-    "eleventh", "twelfth",
-]
-
-
-def _ordinal(n: int) -> str:
-    """1-based ordinal English word, fallback to '{n}-th'."""
-    if 1 <= n <= len(_ORDINAL_WORDS):
-        return _ORDINAL_WORDS[n - 1]
-    return f"{n}-th"
-
-
 class RulerSynthesizer:
-    def __init__(self, tokenizer, vocab_low = 100, task_id=-1, enable_ruler_plus=False, **kwargs):
+    def __init__(self, tokenizer, vocab_low = 100, task_id=-1, **kwargs):
         self.tokenizer = tokenizer
         self._low = vocab_low
         self._high = tokenizer.vocab_size
@@ -59,24 +45,7 @@ class RulerSynthesizer:
         self._fwe_tempalte = "[INST] Read the following coded text and track the frequency of each coded word. Find the three most frequently appeared coded words. {context}\nQuestion: Do not provide any explanation. Please ignore the dots '....'. What are the three most frequently appeared words in the above coded text? [/INST] Answer: According to the coded text above, the three most frequently appeared words are: "
         # self._fwe_wo_prefix_tempalte = "{context}\nQuestion: Do not provide any explanation. Please ignore the dots '....'. What are the three most frequently appeared words in the above coded text? [/INST] Answer: According to the coded text above, the three most frequently appeared words are:"
 
-        # ----- Ruler-Plus: positional multi-value lookup tasks -----
-        # Same template used for both PMVL (task_id=4) and PCVL (task_id=5):
-        #   |KEY: VALUE|
-        # The same KEY may appear multiple times with different VALUEs;
-        # the model must locate the N-th occurrence (and optionally
-        # extract the M-th character of that value).
-        self._pml_template = '|{key}: {val}|'
-        self._pml_question = (
-            ' What is the {ord_n} value for {key} mentioned in the provided text? Answer: '
-        )
-        self._pcl_question = (
-            ' What is the {ord_m} character of the {ord_n} value for {key}'
-            ' mentioned in the provided text? Answer: '
-        )
-        self._pml_answer_end = self.tokenizer.encode('.')
-
         self.task_id = task_id
-        self.enable_ruler_plus = enable_ruler_plus
         self.kwargs = kwargs
 
     def generate_single_niah(self, inputs, length=7):
@@ -249,143 +218,6 @@ class RulerSynthesizer:
 
         return new_ids, new_ids[:-answer_len], new_ids[-answer_len:]
 
-    # ------------------------------------------------------------------
-    # Ruler-Plus tasks
-    # ------------------------------------------------------------------
-    def _build_pml_needles(self, inputs,
-                           num_keys=4, vals_per_key=4, key_name_len=5,
-                           val_len=6, val_charset='digits',
-                           target_n=None, **kwargs):
-        """Build the shared corpus of |KEY: VALUE| needles for PMVL/PCVL.
-
-        Same KEY can appear multiple times with different VALUEs. Returns:
-            needles      : list[list[int]]  encoded |KEY: VAL| strings
-            target_key   : str
-            target_vals  : list[str] (in *insertion order* for that key)
-            n_idx        : int (1-based) which value of `target_key` to ask about
-        """
-        rng = random.Random(int(inputs[0] % 10000) ^ int(inputs[-1] % 10000))
-        rng = np.random.RandomState(seed=[rng.randint(0, 2 ** 32 - 1) for _ in range(16)])
-
-        # generate distinct keys
-        keys = []
-        while len(keys) < num_keys:
-            kname = ''.join(rng.choice(list(string.ascii_uppercase), size=key_name_len))
-            if kname not in keys:
-                keys.append(kname)
-
-        # generate distinct values for each key
-        if val_charset == 'digits':
-            charset = list(string.digits)
-        elif val_charset == 'lower':
-            charset = list(string.ascii_lowercase)
-        else:
-            charset = list(string.ascii_letters + string.digits)
-
-        all_vals_set = set()
-        key_to_vals = {}  # key -> list[str] in *insertion order*
-        for k in keys:
-            vals_for_k = []
-            while len(vals_for_k) < vals_per_key:
-                v = ''.join(rng.choice(charset, size=val_len))
-                if v not in all_vals_set:
-                    vals_for_k.append(v)
-                    all_vals_set.add(v)
-            key_to_vals[k] = vals_for_k
-
-        # decide which key & which n-th value to query
-        target_key = keys[rng.randint(0, num_keys)]
-        if target_n is None:
-            n_idx = int(rng.randint(0, vals_per_key)) + 1  # 1-based
-        else:
-            n_idx = max(1, min(int(target_n), vals_per_key))
-
-        # build (key, val) pairs preserving per-key insertion order, then shuffle
-        # them globally for placement; ordering of same-key pairs is preserved
-        # by indexing them with (key, position-within-key).
-        flat_pairs = []
-        for k in keys:
-            for pos, v in enumerate(key_to_vals[k]):
-                flat_pairs.append((k, pos, v))
-        # global shuffle of placement order
-        order = list(range(len(flat_pairs)))
-        rng.shuffle(order)
-
-        # Re-assign pos within target_key according to actual placement order
-        # so that "the n-th value for KEY" matches the order they appear in text.
-        target_appearance_order = [i for i in order if flat_pairs[i][0] == target_key]
-        target_vals_in_order = [flat_pairs[i][2] for i in target_appearance_order]
-
-        needles = []
-        for i in order:
-            k, _pos, v = flat_pairs[i]
-            needles.append(self.tokenizer.encode(self._pml_template.format(key=k, val=v)))
-
-        return needles, target_key, target_vals_in_order, n_idx, rng
-
-
-    def generate_positional_multi_value_lookup(self, inputs, **kwargs):
-        """Task 4 (Ruler-Plus PMVL): find the n-th value for KEY in text.
-
-        Inserts |KEY: VAL| needles where the same KEY may appear multiple
-        times. Asks: "What is the {n}-th value for KEY?" Answer is the
-        n-th VAL of that KEY in *appearance order*.
-        """
-        needles, target_key, target_vals, n_idx, rng = self._build_pml_needles(inputs, **kwargs)
-        target_val = target_vals[n_idx - 1]
-
-        question = self._pml_question.format(ord_n=_ordinal(n_idx), key=target_key)
-        question_ids = self.tokenizer.encode(question)
-        _answer_ids = self.tokenizer.encode(target_val)
-        answer_ids = np.concatenate((_answer_ids, self._pml_answer_end, [self._eos_id]))
-
-        needle_len = sum(len(ids) for ids in needles)
-        input_ids_trunc = inputs[:-len(answer_ids) - len(question_ids)]
-        input_ids_trunc = input_ids_trunc[:-needle_len]
-        input_with_needle = self._insert_needles_into_ids(input_ids_trunc, needles, rng)
-
-        new_ids = np.concatenate((input_with_needle, question_ids, answer_ids))
-        # answer span is [VAL] + '.' + EOS (last len(_answer_ids)+2 tokens)
-        ans_span = len(_answer_ids) + 2
-        return new_ids, new_ids[:-ans_span], new_ids[-ans_span:]
-
-
-    def generate_positional_char_in_value_lookup(self, inputs,
-                                                  target_m=None, **kwargs):
-        """Task 5 (Ruler-Plus PCVL): find the m-th char of the n-th value for KEY.
-
-        Same needle construction as PMVL, but the question further asks for
-        a single character at a specific position within the located VAL.
-        """
-        # default to numeric values so every "character" is a digit
-        kwargs.setdefault('val_charset', 'digits')
-        kwargs.setdefault('val_len', 7)
-        needles, target_key, target_vals, n_idx, rng = self._build_pml_needles(inputs, **kwargs)
-        target_val = target_vals[n_idx - 1]
-
-        val_len = len(target_val)
-        if target_m is None:
-            m_idx = int(rng.randint(0, val_len)) + 1  # 1-based
-        else:
-            m_idx = max(1, min(int(target_m), val_len))
-        target_char = target_val[m_idx - 1]
-
-        question = self._pcl_question.format(
-            ord_m=_ordinal(m_idx), ord_n=_ordinal(n_idx), key=target_key,
-        )
-        question_ids = self.tokenizer.encode(question)
-        _answer_ids = self.tokenizer.encode(target_char)
-        answer_ids = np.concatenate((_answer_ids, self._pml_answer_end, [self._eos_id]))
-
-        needle_len = sum(len(ids) for ids in needles)
-        input_ids_trunc = inputs[:-len(answer_ids) - len(question_ids)]
-        input_ids_trunc = input_ids_trunc[:-needle_len]
-        input_with_needle = self._insert_needles_into_ids(input_ids_trunc, needles, rng)
-
-        new_ids = np.concatenate((input_with_needle, question_ids, answer_ids))
-        ans_span = len(_answer_ids) + 2
-        return new_ids, new_ids[:-ans_span], new_ids[-ans_span:]
-
     def single_token_eval_collate_fn(self, samples):
         chunk_ids_list = []
         ground_truth = []
@@ -409,10 +241,6 @@ class RulerSynthesizer:
                 # a = a[last_idx + 1:]
             elif self.task_id == 3:
                 _, q, a = self.generate_frequent_words_extraction(ids, **self.kwargs)
-            elif self.task_id == 4 and self.enable_ruler_plus:
-                _, q, a = self.generate_positional_multi_value_lookup(ids, **self.kwargs)
-            elif self.task_id == 5 and self.enable_ruler_plus:
-                _, q, a = self.generate_positional_char_in_value_lookup(ids, **self.kwargs)
             
             chunk_ids_list.append(torch.tensor(np.concatenate([q, a])))
             ground_truth.append(torch.tensor(a))
@@ -430,18 +258,14 @@ class RulerSynthesizer:
         pass_state_ids = []
         final_poses = []
         for group_i, (ids, pass_state) in enumerate(samples):
-            # task_id selection: keep legacy semantics, extend if ruler_plus enabled
-            #   -1 : random over all enabled tasks (0..3, plus 4..5 if ruler_plus)
+            # task_id selection:
+            #   -1 : random over all tasks (0..3)
             #   -2 : random over 0..2 (legacy)
-            #   -3 : ruler_plus-only random over 4..5 (requires enable_ruler_plus)
             #   >=0: explicit task id
             if self.task_id == -1:
-                hi = 5 if self.enable_ruler_plus else 3
-                task_id = random.randint(0, hi)
+                task_id = random.randint(0, 3)
             elif self.task_id == -2:
                 task_id = random.randint(0, 2)
-            elif self.task_id == -3 and self.enable_ruler_plus:
-                task_id = random.randint(4, 5)
             else:
                 task_id = self.task_id
             # print(f'task_id: {self.task_id}')
@@ -454,14 +278,8 @@ class RulerSynthesizer:
                 new_ids, q, _ = self.generate_variable_tracking(ids, **self.kwargs)
             elif task_id == 3:
                 new_ids, q, _ = self.generate_frequent_words_extraction(ids, **self.kwargs)
-            elif task_id == 4 and self.enable_ruler_plus:
-                new_ids, q, _ = self.generate_positional_multi_value_lookup(ids, **self.kwargs)
-            elif task_id == 5 and self.enable_ruler_plus:
-                new_ids, q, _ = self.generate_positional_char_in_value_lookup(ids, **self.kwargs)
             else:
-                raise ValueError(
-                    f"Unsupported task_id={task_id} (enable_ruler_plus={self.enable_ruler_plus})"
-                )
+                raise ValueError(f"Unsupported task_id={task_id}")
             final_poses.append(len(q))
             # print(self.tokenizer.decode(new_ids))
             # print('~' * 20)
@@ -489,11 +307,7 @@ def synthesize_ruler_example(
         else:
             return 1.0
     ratio = extract_ratio(params)
-    # legacy: random over 0..2; if ruler_plus enabled, also include 4 & 5
-    if getattr(ruler_synthesizer, 'enable_ruler_plus', False):
-        task_id = random.choice([0, 1, 2, 4, 5])
-    else:
-        task_id = random.randint(0, 2)
+    task_id = random.randint(0, 2)
     new_ids = None
 
     rand_val = random.random()
@@ -506,10 +320,6 @@ def synthesize_ruler_example(
             new_ids, q, _ = ruler_synthesizer.generate_variable_tracking(example)
         elif task_id == 3:
             new_ids, q, _ = ruler_synthesizer.generate_frequent_words_extraction(example)
-        elif task_id == 4:
-            new_ids, q, _ = ruler_synthesizer.generate_positional_multi_value_lookup(example)
-        elif task_id == 5:
-            new_ids, q, _ = ruler_synthesizer.generate_positional_char_in_value_lookup(example)
     else:
         new_ids = example
     data_dict = {

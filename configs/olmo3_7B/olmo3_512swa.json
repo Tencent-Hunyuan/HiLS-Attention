@@ -63,7 +63,7 @@
     "full_attn_interleave": 4,
     "chunk_size": 64,
     "_attn_implementation": "flash_attention_3",
-    "replace_full_attention_with_lhsa": false,
+    "replace_full_attention_with_hils": false,
     "insert_landmarks": false,
     "adjust_lmk_pos": false,
 }

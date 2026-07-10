@@ -38,4 +38,4 @@ train:
   ckpt_manager: dcp
   save_steps: 100
   save_hf_weights: true
-  wandb_project: FlashHSA
+  wandb_project: HiLS

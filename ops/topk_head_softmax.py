@@ -29,10 +29,10 @@ def ref_softmax_topk_max_pooling(q, k_lmks, lse_swa, topk, block_size, window_si
         drop_mask: [B, L, S] int32 tensor, 1  drop  chunk
         bias: optional per-chunk additive bias. Supported shapes are
               [B, S, h_q] or [B, S, h_kv, G]. When provided, selection logits
-              and HSA LSE add bias[b, chunk, head]. Returned scores stay raw
+              and HiLS LSE add bias[b, chunk, head]. Returned scores stay raw
               scaled qk and do not include bias or Gumbel noise.
         gumbel_noise: optional [1, 1, h_q, S] tensor. When provided, it is
-              added to per-q-head selection logits and HSA LSE logits. Returned
+              added to per-q-head selection logits and HiLS LSE logits. Returned
               scores do not include Gumbel noise.
 
     Returns:
@@ -54,12 +54,12 @@ def ref_softmax_topk_max_pooling(q, k_lmks, lse_swa, topk, block_size, window_si
     if per_qhead_lmks:
         # k_lmks: [B, S, h_kv, G, D]
         k_lmks_v = k_lmks.view(B, S, h_kv, G, D)
-        logits_hsa = torch.einsum("blhgd,bshgd->blhgs", q.float(), k_lmks_v.float())
+        logits_hils = torch.einsum("blhgd,bshgd->blhgs", q.float(), k_lmks_v.float())
     else:
-        logits_hsa = torch.einsum("blhgd,bshd->blhgs", q.float(), k_lmks.float())
+        logits_hils = torch.einsum("blhgd,bshd->blhgs", q.float(), k_lmks.float())
 
     sm_scale = 1.0 / math.sqrt(D)
-    logits_hsa_scaled = logits_hsa * sm_scale
+    logits_hils_scaled = logits_hils * sm_scale
 
     if is_causal:
         i_idx = torch.arange(L, device=q.device).unsqueeze(1)
@@ -70,7 +70,7 @@ def ref_softmax_topk_max_pooling(q, k_lmks, lse_swa, topk, block_size, window_si
         causal_mask = j_idx >= threshold_idx
 
         causal_mask_expanded = causal_mask.view(1, L, 1, 1, S)
-        logits_hsa_scaled = logits_hsa_scaled.masked_fill(causal_mask_expanded, float('-inf'))
+        logits_hils_scaled = logits_hils_scaled.masked_fill(causal_mask_expanded, float('-inf'))
 
     if bias is not None:
         bias = bias.to(device=q.device, dtype=torch.float32)
@@ -86,10 +86,10 @@ def ref_softmax_topk_max_pooling(q, k_lmks, lse_swa, topk, block_size, window_si
             bias_view = bias.permute(0, 2, 3, 1).unsqueeze(1)
         else:
             raise AssertionError(f"bias must be [B, S, h_q] or [B, S, h_kv, G], got {tuple(bias.shape)}")
-        logits_hsa_for_select = logits_hsa_scaled + bias_view
+        logits_hils_for_select = logits_hils_scaled + bias_view
     else:
         bias_view = None
-        logits_hsa_for_select = logits_hsa_scaled
+        logits_hils_for_select = logits_hils_scaled
 
     if gumbel_noise is not None:
         gumbel_noise = gumbel_noise.detach().to(device=q.device, dtype=torch.float32)
@@ -97,18 +97,18 @@ def ref_softmax_topk_max_pooling(q, k_lmks, lse_swa, topk, block_size, window_si
             f"gumbel_noise shape {tuple(gumbel_noise.shape)} != ({1}, {1}, {h_kv * G}, {S})"
         )
         gumbel_view = gumbel_noise.view(1, 1, h_kv, G, S)
-        logits_hsa_for_select = logits_hsa_for_select + gumbel_view
+        logits_hils_for_select = logits_hils_for_select + gumbel_view
 
-    lse_hsa = torch.logsumexp(logits_hsa_for_select, dim=-1)
+    lse_hils = torch.logsumexp(logits_hils_for_select, dim=-1)
 
     if lse_swa.dim() == 3:
         lse_swa_view = lse_swa.view(B, L, h_kv, G)
     else:
         lse_swa_view = lse_swa
 
-    lse_total = torch.logaddexp(lse_swa_view, lse_hsa)
+    lse_total = torch.logaddexp(lse_swa_view, lse_hils)
 
-    log_probs = logits_hsa_for_select - lse_total.unsqueeze(-1)
+    log_probs = logits_hils_for_select - lse_total.unsqueeze(-1)
 
     scores_max_pooling = log_probs.max(dim=3).values
 
@@ -143,7 +143,7 @@ def ref_softmax_topk_max_pooling(q, k_lmks, lse_swa, topk, block_size, window_si
     safe_indices_sorted[safe_indices_sorted < 0] = 0
     indices_expanded = safe_indices_sorted.unsqueeze(3).expand(-1, -1, -1, G, -1)
 
-    scores_sorted = torch.gather(logits_hsa_scaled, -1, indices_expanded)
+    scores_sorted = torch.gather(logits_hils_scaled, -1, indices_expanded)
 
     invalid_mask = indices_sorted.unsqueeze(3).expand(-1, -1, -1, G, -1) < 0
     scores_sorted = scores_sorted.masked_fill(invalid_mask, float('-inf'))
@@ -186,7 +186,7 @@ def ref_softmax_topk_max_pooling(q, k_lmks, lse_swa, topk, block_size, window_si
         tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
     }
 )
-def hsa_lse_kernel(
+def hils_lse_kernel(
     batch, h_kv, groups, head_dim, block_size, window_size,
     is_causal, is_training=True, seq_len=None, s_len=None,
     BLOCK_L=None, BLOCK_S=None, threads=None,
@@ -993,15 +993,15 @@ class SoftmaxTopKMaxPoolingFusedFn(torch.autograd.Function):
         bias = bias.contiguous()
         gumbel_noise = gumbel_noise.contiguous()
 
-        # lse_hsa: [B, L, h_kv, G]
-        lse_hsa = lse_kernel(q_in, k_in, q_offset_tensor, bias, gumbel_noise)
+        # lse_hils: [B, L, h_kv, G]
+        lse_hils = lse_kernel(q_in, k_in, q_offset_tensor, bias, gumbel_noise)
 
         if lse_swa.dim() == 3: # [B, L, h_q]
             lse_swa_view = lse_swa.view(B, L, h_kv, G)
         else:
             lse_swa_view = lse_swa
 
-        lse_total = torch.logaddexp(lse_swa_view, lse_hsa)
+        lse_total = torch.logaddexp(lse_swa_view, lse_hils)
 
         if drop_mask is None:
             drop_mask_in = torch.zeros(1, 1, 1, dtype=torch.int32, device=q.device)
@@ -1150,7 +1150,7 @@ class SoftmaxTopKMaxPooling_Fused(torch.nn.Module):
             seq_len_param = None if not is_training else L
             s_len_param = None if not is_training else S
 
-            self._cached_lse_kernel = hsa_lse_kernel(
+            self._cached_lse_kernel = hils_lse_kernel(
                 B, seq_len=seq_len_param, s_len=s_len_param, h_kv=h_kv, groups=G, head_dim=D,
                 block_size=block_size, window_size=window_size, is_causal=is_causal,
                 is_training=is_training, sm_scale=sm_scale, use_bias=use_bias, use_gumbel=use_gumbel,
@@ -1251,7 +1251,7 @@ def online_softmax_topk_head(
             1  chunk  drop, notand topk .
         bias (torch.Tensor, optional):
             Per-chunk per-query-head additive bias with shape [B, S, h_q]
-            or [B, S, h_kv, G]. When provided, HSA LSE and topk selection add
+            or [B, S, h_kv, G]. When provided, HiLS LSE and topk selection add
             bias[b, chunk, head], while returned scores stay raw scaled qk.
         use_gumbel (bool, optional):
             If True, enable Gumbel sampling in training mode. When

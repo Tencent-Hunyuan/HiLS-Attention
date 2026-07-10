@@ -1,7 +1,6 @@
 export PYTHONPATH=./:${PYTHONPATH:-}
 
 DATA_TYPE=${DTYPE:-ruler_0.05}
-ENABLE_RULER_PLUS=${ENABLE_RULER_PLUS:-true}
 MAX_STEPS=${MAX_STEPS:-30000}
 SAVE_STEPS=${SAVE_STEPS:-5000}
 GLOBAL_BATCH_SIZE=${GLOBAL_BATCH_SIZE:-128}
@@ -19,7 +18,6 @@ bash train_dist.sh tasks/pretrain_with_ruler.py $TRAINING_RECIPE \
     --data.data_type $DATA_TYPE \
     --data.datasets_type olmo3 \
     --data.sort_files true \
-    --data.enable_ruler_plus $ENABLE_RULER_PLUS \
     --data.num_workers 16 \
     --train.init_device meta \
     --train.use_wandb true \

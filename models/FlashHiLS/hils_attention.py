@@ -255,9 +255,6 @@ class HiLSAttention(nn.Module):
             self.q_norm = norm_cls(self.d_model)
             self.k_norm = norm_cls(self.h_kv * self.head_dim)
 
-        if self.enable_lmk_q_proj and not self.layerwise_lmkq_norm:
-            self.lmk_q_norm = norm_cls(self.head_dim)
-
         self.scaling = self.head_dim ** -0.5
         self.sliding_window = config.sliding_window
         self.hils_sliding_window = getattr(config, "hils_sliding_window", self.sliding_window)
@@ -281,21 +278,17 @@ class HiLSAttention(nn.Module):
         self.enable_softmax1 = config.enable_softmax1
         
 
-    def forward(self,
-        hidden_states,
-        attention_mask=None,
-        position_ids=None,
-        past_key_values=None,
-        output_attentions=None,
-        use_cache=False,
-        cache_position=None,
-        position_embeddings=None,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        B, L, _ = hidden_states.shape
-        cos, sin = position_embeddings
+    def _project_qkv(self, hidden_states):
+        """Project hidden states to normed q/k/v and the landmark query.
 
+        Returns ``(hils_q_norm_nope, hils_k_norm_nope, hils_v, lmk_q_norm)``,
+        all in ``(B, L, h, d)`` layout and WITHOUT RoPE applied. When
+        ``enable_lmk_q_proj`` is off, ``lmk_q_norm`` falls back to the normed
+        query itself (legacy behaviour).
+        """
         hils_q = self.q_proj(hidden_states)
+
+        lmk_q_norm = None
         if self.enable_lmk_q_proj:
             lmk_q = self.lmk_q_proj(hidden_states)
             if self.lmk_q_lora_dim > 0:
@@ -310,7 +303,6 @@ class HiLSAttention(nn.Module):
         if self.layerwise_qk_norm:
             hils_q = self.q_norm(hils_q)
         hils_q = rearrange(hils_q, 'B L (h d)->B L h d', d=self.head_dim)
-
         if not self.layerwise_qk_norm:
             hils_q_norm_nope = self.q_norm(hils_q)  # (B, L, h, d)
         else:
@@ -323,7 +315,6 @@ class HiLSAttention(nn.Module):
         if self.layerwise_qk_norm:
             hils_k = self.k_norm(hils_k)
         hils_k = rearrange(hils_k, 'B L (h d)->B L h d', d=self.head_dim)
-
         if not self.layerwise_qk_norm:
             hils_k_norm_nope = self.k_norm(hils_k)
         else:
@@ -332,17 +323,189 @@ class HiLSAttention(nn.Module):
         hils_v = self.v_proj(hidden_states)
         hils_v = rearrange(hils_v, 'B L (h d)->B L h d', d=self.head_dim)
 
-        if self.apply_hils_rope:
-            hils_q_norm_rope, hils_k_norm_rope = apply_rotary_pos_emb(hils_q_norm_nope.transpose(1, 2), hils_k_norm_nope.transpose(1, 2), cos, sin)
-            hils_q_norm_rope = hils_q_norm_rope.transpose(1, 2).contiguous()
-            hils_k_norm_rope = hils_k_norm_rope.transpose(1, 2).contiguous()
-            if self.enable_lmk_q_proj:
-                lmk_q_norm = single_tensor_rope_autograd(lmk_q_norm, cos, sin)
+        return hils_q_norm_nope, hils_k_norm_nope, hils_v, lmk_q_norm
+
+    def _repeat_k_heads_for_gqa(self, k_chunked, h_q_lmk):
+        """Repeat per-chunk K's KV heads up to the lmk_q head count for GQA.
+
+        No-op when ``h_q_lmk == h_kv``. ``k_chunked`` is ``(B, N, S, h_kv, d)``.
+        """
+        if h_q_lmk != self.h_kv:
+            assert h_q_lmk % self.h_kv == 0, (
+                f"lmk_q head count ({h_q_lmk}) must be a multiple of "
+                f"h_kv ({self.h_kv}) for GQA-style chunk pool"
+            )
+            g = h_q_lmk // self.h_kv
+            k_chunked = k_chunked.repeat_interleave(g, dim=3)
+        return k_chunked
+
+    def _compute_landmark_keys(
+        self, lmk_k_source, lmk_q_norm, cos, sin,
+        B, L, full_seq_len, use_cache, past_key_values,
+    ):
+        """Build per-chunk landmark keys and the optional prior bias.
+
+        Returns ``(lmk_k, prior_b)`` covering three regimes:
+          * prior-query with cache continuation (only new chunks are pooled,
+            results appended to ``past_key_values._hils_prior_cache``);
+          * prior-query full pass (prefill / training);
+          * no prior-query (mean-pool or last-token-as-landmark).
+        ``prior_b`` is ``None`` whenever no Taylor bias is produced.
+        """
+        prior_b = None  # (B, num_chunks, h_q) or None
+        full_chunks = full_seq_len // self.chunk_size
+
+        if self.enable_prior_query:
+            h_q_lmk = self.h_q if self.shared_q_c else lmk_q_norm.shape[2]
+
+            is_continuation = (use_cache and past_key_values is not None and L < full_seq_len)
+
+            if is_continuation:
+                if not hasattr(past_key_values, '_hils_prior_cache'):
+                    past_key_values._hils_prior_cache = {}
+                cache_key = self.layer_idx
+                cached = past_key_values._hils_prior_cache.get(cache_key, None)
+
+                prev_seq_len = full_seq_len - L
+                prev_full_chunks = prev_seq_len // self.chunk_size
+                new_chunks = full_chunks - prev_full_chunks
+
+                if new_chunks > 0:
+                    new_k = lmk_k_source[:, prev_full_chunks * self.chunk_size : full_chunks * self.chunk_size, :, :]
+                    new_k = rearrange(new_k, "b (n s) h d -> b n s h d", s=self.chunk_size)
+                    new_k_native = new_k
+
+                    boundary_local = [
+                        self.chunk_size * (prev_full_chunks + k) - 1 - prev_seq_len
+                        for k in range(1, new_chunks + 1)
+                    ]
+                    if self.shared_q_c:
+                        new_mu_q = self.q_c.unsqueeze(0).unsqueeze(0).expand(B, new_chunks, -1, -1)
+                        if self.apply_hils_rope:
+                            q_c_cos = cos[:, boundary_local, :]
+                            q_c_sin = sin[:, boundary_local, :]
+                            new_mu_q = single_tensor_rope_autograd(new_mu_q.contiguous(), q_c_cos, q_c_sin)
+                    else:
+                        new_mu_q = lmk_q_norm[:, boundary_local, :, :]  # (B, new_chunks, h_q_lmk, D)
+
+                    new_k = self._repeat_k_heads_for_gqa(new_k, h_q_lmk)
+
+                    new_lmk_k, new_prior_b = chunk_attn_pool(
+                        new_mu_q,
+                        new_k,
+                    )
+                    if self.enable_chunk_pooling:
+                        new_lmk_k = new_k_native.mean(dim=2)
+
+                    if cached is not None:
+                        lmk_k = torch.cat([cached['lmk_k'], new_lmk_k], dim=1)
+                        prior_b = torch.cat([cached['prior_b'], new_prior_b], dim=1)
+                    else:
+                        lmk_k = new_lmk_k
+                        prior_b = new_prior_b
+
+                    past_key_values._hils_prior_cache[cache_key] = {
+                        'lmk_k': lmk_k,
+                        'prior_b': prior_b,
+                    }
+                else:
+                    if cached is not None:
+                        lmk_k = cached['lmk_k']
+                        prior_b = cached['prior_b']
+                    else:
+                        prior_b = None
+                        lmk_k = lmk_k_source[:, self.chunk_size - 1::self.chunk_size, :, :]
             else:
-                lmk_q_norm = hils_q_norm_rope
+                k_chunked = lmk_k_source[:, : full_chunks * self.chunk_size]
+                k_chunked = rearrange(
+                    k_chunked, "b (n s) h d -> b n s h d", s=self.chunk_size
+                )
+                k_chunked_native = k_chunked
+
+                if self.shared_q_c:
+                    mu_q = self.q_c.unsqueeze(0).unsqueeze(0).expand(B, full_chunks, -1, -1)
+                    if self.apply_hils_rope:
+                        q_c_cos = cos[:, self.chunk_size - 1::self.chunk_size, :][:, :full_chunks]
+                        q_c_sin = sin[:, self.chunk_size - 1::self.chunk_size, :][:, :full_chunks]
+                        mu_q = single_tensor_rope_autograd(mu_q.contiguous(), q_c_cos, q_c_sin)
+                else:
+                    mu_q = lmk_q_norm[:, self.chunk_size - 1::self.chunk_size, :, :][:, :full_chunks]
+                if mu_q.shape[1] == 0:
+                    prior_b = None
+                    if self.enable_chunk_pooling and full_chunks > 0:
+                        lmk_k = k_chunked_native.mean(dim=2)
+                    else:
+                        lmk_k = lmk_k_source[:, self.chunk_size - 1::self.chunk_size, :, :]
+                else:
+                    k_chunked = self._repeat_k_heads_for_gqa(k_chunked, h_q_lmk)
+                    pooled_lmk_k, prior_b = chunk_attn_pool(
+                        mu_q,
+                        k_chunked,
+                    )
+                    if self.enable_chunk_pooling:
+                        lmk_k = k_chunked_native.mean(dim=2)
+                    else:
+                        lmk_k = pooled_lmk_k
+
+                if use_cache and past_key_values is not None and prior_b is not None:
+                    if not hasattr(past_key_values, '_hils_prior_cache'):
+                        past_key_values._hils_prior_cache = {}
+                    past_key_values._hils_prior_cache[self.layer_idx] = {
+                        'lmk_k': lmk_k,
+                        'prior_b': prior_b,
+                    }
         else:
-            hils_q_norm_rope = hils_q_norm_nope
-            hils_k_norm_rope = hils_k_norm_nope
+            if self.enable_chunk_pooling:
+                lmk_k = lmk_k_source[:, : full_chunks * self.chunk_size, :, :]
+                lmk_k = rearrange(lmk_k, "b (n s) h d -> b n s h d", s=self.chunk_size).mean(dim=2)
+            else:
+                lmk_k = lmk_k_source[:, self.chunk_size - 1::self.chunk_size, :, :]  # (B, L // S, hils_kv, d)
+
+        return lmk_k, prior_b
+
+    def _apply_hils_rope(self, hils_q_norm_nope, hils_k_norm_nope, lmk_q_norm, cos, sin):
+        """Apply RoPE to q/k and the landmark query.
+
+        Returns ``(hils_q_norm_rope, hils_k_norm_rope, lmk_q_norm)``. When
+        ``apply_hils_rope`` is off this is a pass-through (rope == nope) and the
+        landmark query is left untouched. When on, q/k are rotated via
+        ``apply_rotary_pos_emb`` (in ``(B, h, L, d)`` layout, then transposed
+        back), and ``lmk_q_norm`` is either rotated on its own (when it comes
+        from a dedicated projection) or aliased to the rotated query.
+        """
+        if not self.apply_hils_rope:
+            return hils_q_norm_nope, hils_k_norm_nope, lmk_q_norm
+
+        hils_q_norm_rope, hils_k_norm_rope = apply_rotary_pos_emb(
+            hils_q_norm_nope.transpose(1, 2), hils_k_norm_nope.transpose(1, 2), cos, sin
+        )
+        hils_q_norm_rope = hils_q_norm_rope.transpose(1, 2).contiguous()
+        hils_k_norm_rope = hils_k_norm_rope.transpose(1, 2).contiguous()
+        if self.enable_lmk_q_proj:
+            lmk_q_norm = single_tensor_rope_autograd(lmk_q_norm, cos, sin)
+        else:
+            lmk_q_norm = hils_q_norm_rope
+        return hils_q_norm_rope, hils_k_norm_rope, lmk_q_norm
+
+    def forward(self,
+        hidden_states,
+        attention_mask=None,
+        position_ids=None,
+        past_key_values=None,
+        output_attentions=None,
+        use_cache=False,
+        cache_position=None,
+        position_embeddings=None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        B, L, _ = hidden_states.shape
+        cos, sin = position_embeddings
+
+        hils_q_norm_nope, hils_k_norm_nope, hils_v, lmk_q_norm = self._project_qkv(hidden_states)
+
+        hils_q_norm_rope, hils_k_norm_rope, lmk_q_norm = self._apply_hils_rope(
+            hils_q_norm_nope, hils_k_norm_nope, lmk_q_norm, cos, sin
+        )
 
         # Inference/chunk-prefill: HiLS KV cache.  Keep the cached K in the
         # same representation that retrieval and HiLS attention consume.
@@ -390,125 +553,10 @@ class HiLSAttention(nn.Module):
             else:
                 lmk_k_source = hils_k_norm_nope
 
-            prior_b = None  # (B, num_chunks, h_q) or None
-            full_chunks = full_seq_len // self.chunk_size
-            if self.enable_prior_query:
-                h_q_lmk = self.h_q if self.shared_q_c else lmk_q_norm.shape[2]
-
-                is_continuation = (use_cache and past_key_values is not None and L < full_seq_len)
-
-                if is_continuation:
-                    if not hasattr(past_key_values, '_hils_prior_cache'):
-                        past_key_values._hils_prior_cache = {}
-                    cache_key = self.layer_idx
-                    cached = past_key_values._hils_prior_cache.get(cache_key, None)
-
-                    prev_seq_len = full_seq_len - L
-                    prev_full_chunks = prev_seq_len // self.chunk_size
-                    new_chunks = full_chunks - prev_full_chunks
-
-                    if new_chunks > 0:
-                        new_k = lmk_k_source[:, prev_full_chunks * self.chunk_size : full_chunks * self.chunk_size, :, :]
-                        new_k = rearrange(new_k, "b (n s) h d -> b n s h d", s=self.chunk_size)
-                        new_k_native = new_k
-
-                        boundary_local = [
-                            self.chunk_size * (prev_full_chunks + k) - 1 - prev_seq_len
-                            for k in range(1, new_chunks + 1)
-                        ]
-                        if self.shared_q_c:
-                            new_mu_q = self.q_c.unsqueeze(0).unsqueeze(0).expand(B, new_chunks, -1, -1)
-                            if self.apply_hils_rope:
-                                q_c_cos = cos[:, boundary_local, :]
-                                q_c_sin = sin[:, boundary_local, :]
-                                new_mu_q = single_tensor_rope_autograd(new_mu_q.contiguous(), q_c_cos, q_c_sin)
-                        else:
-                            new_mu_q = lmk_q_norm[:, boundary_local, :, :]  # (B, new_chunks, h_q_lmk, D)
-
-                        if h_q_lmk != self.h_kv:
-                            assert h_q_lmk % self.h_kv == 0, (
-                                f"lmk_q head count ({h_q_lmk}) must be a multiple of "
-                                f"h_kv ({self.h_kv}) for GQA-style chunk pool"
-                            )
-                            g = h_q_lmk // self.h_kv
-                            new_k = new_k.repeat_interleave(g, dim=3)
-
-                        new_lmk_k, new_prior_b = chunk_attn_pool(
-                            new_mu_q,
-                            new_k,
-                        )
-                        if self.enable_chunk_pooling:
-                            new_lmk_k = new_k_native.mean(dim=2)
-
-                        if cached is not None:
-                            lmk_k = torch.cat([cached['lmk_k'], new_lmk_k], dim=1)
-                            prior_b = torch.cat([cached['prior_b'], new_prior_b], dim=1)
-                        else:
-                            lmk_k = new_lmk_k
-                            prior_b = new_prior_b
-
-                        past_key_values._hils_prior_cache[cache_key] = {
-                            'lmk_k': lmk_k,
-                            'prior_b': prior_b,
-                        }
-                    else:
-                        if cached is not None:
-                            lmk_k = cached['lmk_k']
-                            prior_b = cached['prior_b']
-                        else:
-                            prior_b = None
-                            lmk_k = lmk_k_source[:, self.chunk_size - 1::self.chunk_size, :, :]
-                else:
-                    k_chunked = lmk_k_source[:, : full_chunks * self.chunk_size]
-                    k_chunked = rearrange(
-                        k_chunked, "b (n s) h d -> b n s h d", s=self.chunk_size
-                    )
-                    k_chunked_native = k_chunked
-
-                    if self.shared_q_c:
-                        mu_q = self.q_c.unsqueeze(0).unsqueeze(0).expand(B, full_chunks, -1, -1)
-                        if self.apply_hils_rope:
-                            q_c_cos = cos[:, self.chunk_size - 1::self.chunk_size, :][:, :full_chunks]
-                            q_c_sin = sin[:, self.chunk_size - 1::self.chunk_size, :][:, :full_chunks]
-                            mu_q = single_tensor_rope_autograd(mu_q.contiguous(), q_c_cos, q_c_sin)
-                    else:
-                        mu_q = lmk_q_norm[:, self.chunk_size - 1::self.chunk_size, :, :][:, :full_chunks]
-                    if mu_q.shape[1] == 0:
-                        prior_b = None
-                        if self.enable_chunk_pooling and full_chunks > 0:
-                            lmk_k = k_chunked_native.mean(dim=2)
-                        else:
-                            lmk_k = lmk_k_source[:, self.chunk_size - 1::self.chunk_size, :, :]
-                    else:
-                        if h_q_lmk != self.h_kv:
-                            assert h_q_lmk % self.h_kv == 0, (
-                                f"lmk_q head count ({h_q_lmk}) must be a multiple of "
-                                f"h_kv ({self.h_kv}) for GQA-style chunk pool"
-                            )
-                            g = h_q_lmk // self.h_kv
-                            k_chunked = k_chunked.repeat_interleave(g, dim=3)
-                        pooled_lmk_k, prior_b = chunk_attn_pool(
-                            mu_q,
-                            k_chunked,
-                        )
-                        if self.enable_chunk_pooling:
-                            lmk_k = k_chunked_native.mean(dim=2)
-                        else:
-                            lmk_k = pooled_lmk_k
-
-                    if use_cache and past_key_values is not None and prior_b is not None:
-                        if not hasattr(past_key_values, '_hils_prior_cache'):
-                            past_key_values._hils_prior_cache = {}
-                        past_key_values._hils_prior_cache[self.layer_idx] = {
-                            'lmk_k': lmk_k,
-                            'prior_b': prior_b,
-                        }
-            else:
-                if self.enable_chunk_pooling:
-                    lmk_k = lmk_k_source[:, : full_chunks * self.chunk_size, :, :]
-                    lmk_k = rearrange(lmk_k, "b (n s) h d -> b n s h d", s=self.chunk_size).mean(dim=2)
-                else:
-                    lmk_k = lmk_k_source[:, self.chunk_size - 1::self.chunk_size, :, :]  # (B, L // S, hils_kv, d)
+            lmk_k, prior_b = self._compute_landmark_keys(
+                lmk_k_source, lmk_q_norm, cos, sin,
+                B, L, full_seq_len, use_cache, past_key_values,
+            )
 
             B, S,  H, D = lmk_k.shape
             lmk_k = lmk_k.reshape(B, S, H, D)
@@ -586,4 +634,4 @@ class HiLSAttention(nn.Module):
 
 if is_liger_kernel_available():
     apply_rotary_pos_emb = liger_rotary_pos_emb
-    logger.info_rank0("Apply liger kernel to LHSA.")
+    logger.info_rank0("Apply liger kernel to HiLS.")
