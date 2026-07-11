@@ -470,9 +470,8 @@ def flex_attn_bwd(
             kv_lo = by * block_M
             kv_hi = (by + 1) * block_M
             q_lo = kv_lo
-            q_hi = kv_hi + window_size + chunk_size
-            if q_hi > seq_len:
-                q_hi = seq_len
+            # Preserve symbolic loop bounds.
+            q_hi = T.min(kv_hi + window_size + chunk_size, seq_len)
 
             loop_st = T.floordiv(q_lo, block_N)
             loop_ed = T.ceildiv(q_hi, block_N)
@@ -859,15 +858,13 @@ def flex_attn_bwd_dq(
             q_hi = (by + 1) * block_M
             # Lower bound on kv that any q in this tile can attend to.
             if expand_to_chunk:
-                kv_lo = T.floordiv(q_lo - window_size + 1, chunk_size) * chunk_size
+                kv_lo_raw = T.floordiv(q_lo - window_size + 1, chunk_size) * chunk_size
             else:
-                kv_lo = q_lo - window_size + 1
-            if kv_lo < 0:
-                kv_lo = 0
+                kv_lo_raw = q_lo - window_size + 1
+            # Preserve symbolic loop bounds.
+            kv_lo = T.max(kv_lo_raw, 0)
             # Upper bound: kv_real <= q_real <= q_hi - 1.
-            kv_hi = q_hi
-            if kv_hi > seq_len:
-                kv_hi = seq_len
+            kv_hi = T.min(q_hi, seq_len)
 
             loop_st = T.floordiv(kv_lo, block_N)
             loop_ed = T.ceildiv(kv_hi, block_N)
@@ -1055,11 +1052,11 @@ def flex_attn_bwd_dkdv(
             kv_hi = (by + 1) * block_M
             q_lo = kv_lo
             if expand_to_chunk:
-                q_hi = kv_hi + window_size + chunk_size
+                q_hi_raw = kv_hi + window_size + chunk_size
             else:
-                q_hi = kv_hi + window_size
-            if q_hi > seq_len:
-                q_hi = seq_len
+                q_hi_raw = kv_hi + window_size
+            # Preserve symbolic loop bounds.
+            q_hi = T.min(q_hi_raw, seq_len)
 
             loop_st = T.floordiv(q_lo, block_N)
             loop_ed = T.ceildiv(q_hi, block_N)
