@@ -28,7 +28,7 @@ We are actively working on releasing more resources. Stay tuned!
 
 - [x] Release training and evaluation code
 - [x] Release pre-trained model checkpoints
-- [ ] Release SGLang inference code for efficient long-context serving
+- [x] Release SGLang inference code for efficient long-context serving
 
 ## Environment Setup
 
@@ -221,6 +221,47 @@ EVAL_MODE=ruler bash scripts/eval/eval_olmo3_ruler_ppl.sh
 
 
 Logs and a LaTeX summary (`summary.log`) are saved to `scripts/eval/logs/eval_olmo3_<mode>_<timestamp>/`.
+
+## Efficient Inference with SGLang
+
+HiLS-Attention has a native [SGLang](https://github.com/sgl-project/sglang) serving
+backend that implements the hierarchical sparse attention as a first-class attention
+backend, so the released checkpoints (e.g. [HiLS-Attention-7B](https://huggingface.co/tencent/HiLS-Attention-7B))
+can be served with the standard SGLang server and OpenAI-compatible API, and enjoy
+HiLS-Attention's long-context speedups over dense attention (increasing with sequence
+length). The backend is closely aligned with the reference model.
+
+The backend lives here: **[alexzms/SGLang-HiLS](https://github.com/alexzms/SGLang-HiLS)**.
+See its [HSA README](https://github.com/alexzms/SGLang-HiLS/blob/main/python/sglang/srt/layers/attention/hsa/README.md)
+for full environment, config, and benchmark details.
+
+### Quick start
+
+```bash
+# 1. Install SGLang-HiLS (SGLang with the HSA backend)
+git clone https://github.com/alexzms/SGLang-HiLS.git
+cd SGLang-HiLS && pip install -e "python[all]"
+# HSA selection kernels also require `tilelang` (see the fork's HSA README).
+
+# 2. Download the released checkpoint
+huggingface-cli download tencent/HiLS-Attention-7B --local-dir ./HiLS-Attention-7B
+
+# 3. Convert the checkpoint for SGLang (translates config.json; weights are symlinked)
+python scripts/convert_hils_checkpoint.py \
+    --src ./HiLS-Attention-7B --dst ./HiLS-Attention-7B-sglang
+
+# 4a. Serve (OpenAI-compatible API on http://localhost:30000)
+python -m sglang.launch_server --model-path ./HiLS-Attention-7B-sglang \
+    --attention-backend hsa --page-size 64 --trust-remote-code
+
+# 4b. Or run offline on your own prompts
+python scripts/run_hsa_infer.py --model-path ./HiLS-Attention-7B-sglang \
+    "The capital of France is" "Water is made of hydrogen and"
+```
+
+> `--page-size` **must** equal the model's `chunk_size` (64). The backend
+> auto-configures the required HSA serving constraints (single-sequence prefill;
+> overlap scheduler disabled) — no extra flags needed.
 
 ## Citation
 
