@@ -231,16 +231,16 @@ can be served with the standard SGLang server and OpenAI-compatible API, and enj
 HiLS-Attention's long-context speedups over dense attention (increasing with sequence
 length). The backend is closely aligned with the reference model.
 
-The backend lives here: **[alexzms/SGLang-HSA](https://github.com/alexzms/SGLang-HSA)**.
-See its [HSA README](https://github.com/alexzms/SGLang-HSA/blob/main/python/sglang/srt/layers/attention/hsa/README.md)
+The backend lives here: **[alexzms/SGLang-HiLS](https://github.com/alexzms/SGLang-HiLS)**.
+See its [HSA README](https://github.com/alexzms/SGLang-HiLS/blob/main/python/sglang/srt/layers/attention/hsa/README.md)
 for full environment, config, and benchmark details.
 
 ### Quick start
 
 ```bash
-# 1. Install SGLang-HSA (SGLang with the HSA backend)
-git clone https://github.com/alexzms/SGLang-HSA.git
-cd SGLang-HSA && pip install -e "python[all]"
+# 1. Install SGLang-HiLS (SGLang with the HSA backend)
+git clone https://github.com/alexzms/SGLang-HiLS.git
+cd SGLang-HiLS && pip install -e "python[all]"
 # HSA selection kernels also require `tilelang` (see the fork's HSA README).
 
 # 2. Download the released checkpoint
