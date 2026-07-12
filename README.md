@@ -229,18 +229,18 @@ backend that implements the hierarchical sparse attention as a first-class atten
 backend, so the released checkpoints (e.g. [HiLS-Attention-7B](https://huggingface.co/tencent/HiLS-Attention-7B))
 can be served with the standard SGLang server and OpenAI-compatible API, and enjoy
 HiLS-Attention's long-context speedups over dense attention (increasing with sequence
-length). The backend is numerically aligned with the reference model.
+length). The backend is closely aligned with the reference model.
 
-The backend lives in a fork: **[FoundationResearch/sglang @ `hsa-release`](https://github.com/FoundationResearch/sglang/tree/hsa-release)**.
-See its [HSA README](https://github.com/FoundationResearch/sglang/blob/hsa-release/python/sglang/srt/layers/attention/hsa/README.md)
+The backend lives here: **[alexzms/SGLang-HSA](https://github.com/alexzms/SGLang-HSA)**.
+See its [HSA README](https://github.com/alexzms/SGLang-HSA/blob/main/python/sglang/srt/layers/attention/hsa/README.md)
 for full environment, config, and benchmark details.
 
 ### Quick start
 
 ```bash
-# 1. Install the SGLang fork with the HSA backend
-git clone -b hsa-release https://github.com/FoundationResearch/sglang.git
-cd sglang && pip install -e "python[all]"
+# 1. Install SGLang-HSA (SGLang with the HSA backend)
+git clone https://github.com/alexzms/SGLang-HSA.git
+cd SGLang-HSA && pip install -e "python[all]"
 # HSA selection kernels also require `tilelang` (see the fork's HSA README).
 
 # 2. Download the released checkpoint
