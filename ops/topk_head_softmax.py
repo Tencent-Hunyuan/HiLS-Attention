@@ -66,7 +66,10 @@ def ref_softmax_topk_max_pooling(q, k_lmks, lse_swa, topk, block_size, window_si
         i_idx_global = i_idx + q_offset
         j_idx = torch.arange(S, device=q.device).unsqueeze(0)
 
-        threshold_idx = (i_idx_global - window_size + 1).div(block_size, rounding_mode='floor')
+        if window_size > 0:
+            threshold_idx = (i_idx_global - window_size + 1).div(block_size, rounding_mode='floor')
+        else:
+            threshold_idx = i_idx_global.div(block_size, rounding_mode='floor')
         causal_mask = j_idx >= threshold_idx
 
         causal_mask_expanded = causal_mask.view(1, L, 1, 1, S)
@@ -323,8 +326,12 @@ def hils_lse_kernel(
                         tq_local = base_l + l_idx
                         tq_global = q_offset + tq_local
                         if tq_local < seq_len_var:
-                            if ts >= (tq_global - window_size + 1) // block_size:
-                                score_shared[i, j] = -T.infinity(accum_dtype)
+                            if window_size > 0:
+                                if ts >= (tq_global - window_size + 1) // block_size:
+                                    score_shared[i, j] = -T.infinity(accum_dtype)
+                            else:
+                                if ts >= tq_global // block_size:
+                                    score_shared[i, j] = -T.infinity(accum_dtype)
 
                 T.sync_threads()
                 T.copy(score_shared, acc_s)
@@ -558,15 +565,23 @@ def weighted_select_kernel(
                         tq_local = base_l + l_idx
                         tq_global = q_offset + tq_local
                         ts = base_s + j
-                        if ts >= (tq_global - window_size + 1) // block_size:
-                            score_shared[i, j] = -T.infinity(accum_dtype)
+                        if window_size > 0:
+                            if ts >= (tq_global - window_size + 1) // block_size:
+                                score_shared[i, j] = -T.infinity(accum_dtype)
+                        else:
+                            if ts >= tq_global // block_size:
+                                score_shared[i, j] = -T.infinity(accum_dtype)
                 T.sync_threads()
 
                 if tx < BLOCK_L and (base_l + tx) < seq_len_var:
                     my_l_idx = tx
                     tq = base_l + my_l_idx
                     tq_global = q_offset + tq
-                    limit_chunk = (tq_global - window_size + 1) // block_size
+                    limit_chunk = T.alloc_var(idx_dtype)
+                    if window_size > 0:
+                        limit_chunk = (tq_global - window_size + 1) // block_size
+                    else:
+                        limit_chunk = tq_global // block_size
                     val = T.alloc_var(accum_dtype)
                     norm_score = T.alloc_var(accum_dtype)
                     cur_max_norm_score = T.alloc_var(accum_dtype)
@@ -1411,7 +1426,10 @@ def test_fused_topk_softmax_max_pooling_correctness():
         i_idx = torch.arange(L, device=device).unsqueeze(1)
         j_idx = torch.arange(S, device=device).unsqueeze(0)
         # Update manual check to match window mechanism
-        aligned_threshold = (i_idx - window_size + 1).div(block_size, rounding_mode='floor')
+        if window_size > 0:
+            aligned_threshold = (i_idx - window_size + 1).div(block_size, rounding_mode='floor')
+        else:
+            aligned_threshold = i_idx.div(block_size, rounding_mode='floor')
         causal_mask = j_idx >= aligned_threshold
 
         causal_mask_expanded = causal_mask.view(1, L, 1, 1, S)
@@ -2124,7 +2142,10 @@ def test_drop_mask_correctness(per_qhead_lmks: bool = False):
     if is_causal:
         i_idx = torch.arange(L, device=device).unsqueeze(1)
         j_idx = torch.arange(S, device=device).unsqueeze(0)
-        aligned_threshold = (i_idx - window_size + 1).div(block_size, rounding_mode='floor')
+        if window_size > 0:
+            aligned_threshold = (i_idx - window_size + 1).div(block_size, rounding_mode='floor')
+        else:
+            aligned_threshold = i_idx.div(block_size, rounding_mode='floor')
         causal_mask = j_idx >= aligned_threshold
         causal_mask_expanded = causal_mask.view(1, L, 1, 1, S)
         scores_all_ref = scores_all_ref.masked_fill(causal_mask_expanded, float('-inf'))
@@ -2366,7 +2387,10 @@ def test_gqa_d_reshape_correctness():
     if is_causal:
         i_idx = torch.arange(L, device=device).unsqueeze(1)
         j_idx = torch.arange(S, device=device).unsqueeze(0)
-        aligned_threshold = (i_idx - window_size + 1).div(block_size, rounding_mode='floor')
+        if window_size > 0:
+            aligned_threshold = (i_idx - window_size + 1).div(block_size, rounding_mode='floor')
+        else:
+            aligned_threshold = i_idx.div(block_size, rounding_mode='floor')
         causal_mask = j_idx >= aligned_threshold
         causal_mask_expanded = causal_mask.view(1, L, 1, 1, S)
         scores_all_ref = scores_all_ref.masked_fill(causal_mask_expanded, float('-inf'))
@@ -2505,4 +2529,4 @@ if __name__ == "__main__":
     # test_gqa_d_reshape_correctness()
 
 
-# python ops/topk_head_softmax_perchunkbias.py
+# python ops/topk_head_softmax.py
