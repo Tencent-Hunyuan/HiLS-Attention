@@ -279,7 +279,12 @@ def hils_lse_kernel(
             loop_limit_base = tilelang.cdiv(s_len_var, BLOCK_S)
             if is_causal:
                 global_end = q_offset + base_l + BLOCK_L
-                loop_limit = T.min(loop_limit_base, tilelang.cdiv(global_end, BLOCK_S))
+                if window_size > 0:
+                    chunk_limit_raw = (global_end - window_size) // block_size
+                else:
+                    chunk_limit_raw = (global_end - 1) // block_size
+                chunk_limit = T.max(chunk_limit_raw, 0)
+                loop_limit = T.min(loop_limit_base, tilelang.cdiv(chunk_limit, BLOCK_S))
             else:
                 loop_limit = loop_limit_base
 
@@ -524,7 +529,12 @@ def weighted_select_kernel(
             loop_limit_base = num_s_blocks
             if is_causal:
                 global_end = q_offset + base_l + BLOCK_L
-                loop_limit = T.min(loop_limit_base, tilelang.cdiv(global_end, BLOCK_S))
+                if window_size > 0:
+                    chunk_limit_raw = (global_end - window_size) // block_size
+                else:
+                    chunk_limit_raw = (global_end - 1) // block_size
+                chunk_limit = T.max(chunk_limit_raw, 0)
+                loop_limit = T.min(loop_limit_base, tilelang.cdiv(chunk_limit, BLOCK_S))
             else:
                 loop_limit = loop_limit_base
             for s_block in T.serial(loop_limit):
@@ -2529,4 +2539,4 @@ if __name__ == "__main__":
     # test_gqa_d_reshape_correctness()
 
 
-# python ops/topk_head_softmax.py
+# python ops/topk_head_softmax_perchunkbias.py
