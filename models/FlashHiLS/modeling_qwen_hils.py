@@ -842,8 +842,10 @@ class HiLSForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
         gs = self._gen_state
         if gs.lmk_positions_in_input is not None:
             mask = torch.ones(hidden_states.shape[1], dtype=torch.bool, device=hidden_states.device)
-            for pos in gs.lmk_positions_in_input:
-                mask[pos] = False
+            lmk_index = torch.as_tensor(
+                gs.lmk_positions_in_input, dtype=torch.long, device=hidden_states.device
+            )
+            mask[lmk_index] = False
             hidden_states = hidden_states[:, mask, :]
             gs.lmk_positions_in_input = None
         elif non_lmk_mask is not None:
@@ -910,7 +912,10 @@ class HiLSForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
             gs.next_pos = orig_len
             gs.cache_seq_len = seq_len_with_lmk
             gs.active = True
-            gs.lmk_positions_in_input = None
+            num_lmk = orig_len // (self.chunk_size - 1)
+            gs.lmk_positions_in_input = [
+                k * self.chunk_size - 1 for k in range(1, num_lmk + 1)
+            ] or None
 
             return {
                 "input_ids": input_ids,
